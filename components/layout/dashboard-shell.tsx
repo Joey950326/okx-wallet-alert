@@ -4,6 +4,7 @@ import * as React from "react"
 import { Menu } from "lucide-react"
 
 import { SidebarNav } from "@/components/layout/sidebar-nav"
+import { ThemeSwitcher } from "@/components/theme/theme-switcher"
 import { Button } from "@/components/ui/button"
 import {
   Sheet,
@@ -29,6 +30,10 @@ export function DashboardShell({ children }: DashboardShellProps) {
         <div className="flex-1 p-2">
           <SidebarNav />
         </div>
+        <div className="border-t p-4">
+          <p className="mb-2 text-xs font-medium text-muted-foreground">主题</p>
+          <ThemeSwitcher />
+        </div>
       </aside>
 
       <div className="flex flex-col bg-background">
@@ -49,6 +54,7 @@ export function DashboardShell({ children }: DashboardShellProps) {
             </SheetContent>
           </Sheet>
           <p className="text-sm font-semibold tracking-wide">OKX Wallet Alert</p>
+          <ThemeSwitcher compact />
         </header>
 
         <main className="flex-1 p-4 md:p-8">{children}</main>

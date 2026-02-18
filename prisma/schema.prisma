@@ -1,0 +1,57 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// 监控时间段枚举
+enum MonitorTimeLevelEnum {
+  FIVE_MINUTES
+  FIFTEEN_MINUTES
+  ONE_HOUR  
+  FOUR_HOURS
+  ONE_DAY
+  ONE_WEEK
+}
+
+
+
+// 超管用户
+model adminUser {
+  id        String   @id @default(uuid())
+  username  String  @unique
+  password  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// 加密货币
+model crypto {
+  id        String   @id @default(uuid())
+  symbol    String   @unique // 标识
+  token String   @unique // 代币地址
+  marketCap Float // 市值
+  price     Float // 价格
+  monitorTimeLevel MonitorTimeLevelEnum // 监控时间段
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// 主页数据
+model homeData {
+  id        String   @id @default(uuid())
+  useGold Boolean // 是否使用金狗
+  useSilver Boolean // 是否使用银狗
+  useBronze Boolean // 是否使用铜狗
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

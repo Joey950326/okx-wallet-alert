@@ -18,6 +18,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { get } from "@/lib/http"
 
 type JingouSignalRow = {
   id: string
@@ -51,8 +52,25 @@ const mockRows: JingouSignalRow[] = [
   },
 ]
 
+/**
+ * 获取金狗信号数据
+ * 如果有 API 端点，可以这样调用：
+ * const response = await get<JingouSignalRow[]>('/api/jingou-signals')
+ * return response.data
+ */
 async function fetchJingouSignals(): Promise<JingouSignalRow[]> {
+  // 模拟 API 请求延迟
   await new Promise((resolve) => setTimeout(resolve, 200))
+  
+  // TODO: 替换为真实 API 调用
+  // try {
+  //   const response = await get<JingouSignalRow[]>('/api/jingou-signals')
+  //   return response.data
+  // } catch (error) {
+  //   console.error('获取金狗信号失败:', error)
+  //   throw error
+  // }
+  
   return mockRows
 }
 

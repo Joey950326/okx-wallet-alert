@@ -50,6 +50,7 @@ model adminUser {
 // 加密货币
 model crypto {
   id        String   @id @default(uuid())
+  taskId    String   @unique // 任务ID
   symbol    String   @unique // 标识
   token String   @unique // 代币地址
   marketCap Float // 市值

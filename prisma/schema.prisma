@@ -23,6 +23,19 @@ enum MonitorTimeLevelEnum {
   ONE_WEEK
 }
 
+// 信号类型
+enum gemsTypeEnum {
+  GOLD_DOG
+  SILVER_DOG
+  BRONZE_DOG
+}
+
+// 自定义信号类型
+enum signalTypeEnum {
+  BUY
+  SELL
+  NONE
+}
 
 
 // 超管用户
@@ -41,7 +54,10 @@ model crypto {
   token String   @unique // 代币地址
   marketCap Float // 市值
   price     Float // 价格
+  monitorTime Float // 监控时间（单位：秒）
   monitorTimeLevel MonitorTimeLevelEnum // 监控时间段
+  signal signalTypeEnum // 信号
+  signalTime DateTime? // 信号时间
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -54,4 +70,18 @@ model homeData {
   useBronze Boolean // 是否使用铜狗
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// 金狗数据
+model goldDogData {
+  id        String   @id @default(uuid())
+  price     Float // 金狗价格
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  currentMcap Float // 市值
+  firstSignalMcap Float // 第一次信号的市值
+  tokenSymbol String   @unique // 代币符号
+  tokenContractAddress String   @unique // 代币合约地址
+  gemsType gemsTypeEnum // 金狗，银狗，铜狗
+  firstSignalTime DateTime // 第一个信号时间
 }

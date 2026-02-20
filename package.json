@@ -10,7 +10,7 @@
     "db:seed": "bunx --bun tsx /prisma/seed.ts",
     "db:generate": "bunx --bun prisma generate",
     "db:migrate": "bunx --bun prisma migrate dev --name",
-    "db:studio": "bunx --bun prisma studio",
+    "db:studio": "bunx --bun prisma studio"
   },
   "type": "module",
   "dependencies": {

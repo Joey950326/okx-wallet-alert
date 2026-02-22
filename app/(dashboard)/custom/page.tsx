@@ -46,6 +46,7 @@ const TIME_LEVEL_OPTIONS: Array<{ label: string; value: CustomMonitorTimeLevel }
   { label: "分钟", value: "FIVE_MINUTES" },
   { label: "小时", value: "ONE_HOUR" },
   { label: "天", value: "ONE_DAY" },
+  { label: "周", value: "ONE_WEEK" },
 ]
 
 const INITIAL_FORM_STATE: { address: string; timeLevel: CustomMonitorTimeLevel; timeValue: string } = {
@@ -157,6 +158,16 @@ export default function CustomPage() {
     },
     [formState, resetForm, rows]
   )
+
+  const COMMON_PRESETS: Array<{ label: string; value: number; level: CustomMonitorTimeLevel }> = [
+    { label: "1分钟", value: 1, level: "FIVE_MINUTES" },
+    { label: "5分钟", value: 5, level: "FIVE_MINUTES" },
+    { label: "15分钟", value: 15, level: "FIVE_MINUTES" },
+    { label: "1小时", value: 1, level: "ONE_HOUR" },
+    { label: "4小时", value: 4, level: "ONE_HOUR" },
+    { label: "1天", value: 1, level: "ONE_DAY" },
+    { label: "1周", value: 1, level: "ONE_WEEK" },
+  ]
 
   const columns = React.useMemo<ColumnDef<CustomMonitorRow>[]>(
     () => [
@@ -363,6 +374,25 @@ export default function CustomPage() {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                {COMMON_PRESETS.map((preset) => (
+                  <Button
+                    key={`${preset.label}-${preset.value}`}
+                    type="button"
+                    size="sm"
+                    variant={
+                      formState.timeValue === String(preset.value) && formState.timeLevel === preset.level
+                        ? "secondary"
+                        : "ghost"
+                    }
+                    onClick={() =>
+                      setFormState((prev) => ({ ...prev, timeValue: String(preset.value), timeLevel: preset.level }))
+                    }
+                  >
+                    {preset.label}
+                  </Button>
+                ))}
               </div>
             </div>
 

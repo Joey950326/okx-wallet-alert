@@ -13,6 +13,7 @@ const OKX_PROJECT_ID = process.env.OKX_PROJECT_ID || process.env.OK_ACCESS_PROJE
 const OKX_PROXY_URL = process.env.OKX_PROXY_URL || process.env.HTTPS_PROXY || process.env.HTTP_PROXY
 
 const TOKEN_DETAIL_PATH = '/api/v5/wallet/token/token-detail'
+const HISTORICAL_PRICE_PATH = '/api/v5/wallet/token/historical-price'
 
 export interface GetTokenInfoByAddressParams {
   chainIndex: string
@@ -43,6 +44,28 @@ export interface OkxTokenInfo {
   totalSupply?: string
   volume24h?: string
   marketCap?: string
+}
+
+export type OkxPricePeriod = '1m' | '5m' | '30m' | '1h' | '1d'
+
+export interface GetPriceByAddressParams {
+  chainIndex: string
+  tokenAddress?: string
+  limit?: string
+  cursor?: string
+  begin?: string
+  end?: string
+  period?: OkxPricePeriod
+}
+
+export interface OkxHistoricalPriceItem {
+  time: string
+  price: string
+}
+
+export interface OkxHistoricalPriceData {
+  cursor?: string
+  prices: OkxHistoricalPriceItem[]
 }
 
 interface OkxResponse<T> {
@@ -82,6 +105,38 @@ function buildRequestPath(params: GetTokenInfoByAddressParams): string {
   })
 
   return `${TOKEN_DETAIL_PATH}?${search.toString()}`
+}
+
+function buildHistoricalPricePath(params: GetPriceByAddressParams): string {
+  const search = new URLSearchParams({
+    chainIndex: params.chainIndex,
+  })
+
+  if (params.tokenAddress !== undefined) {
+    search.set('tokenAddress', params.tokenAddress)
+  }
+
+  if (params.limit !== undefined) {
+    search.set('limit', params.limit)
+  }
+
+  if (params.cursor !== undefined) {
+    search.set('cursor', params.cursor)
+  }
+
+  if (params.begin !== undefined) {
+    search.set('begin', params.begin)
+  }
+
+  if (params.end !== undefined) {
+    search.set('end', params.end)
+  }
+
+  if (params.period !== undefined) {
+    search.set('period', params.period)
+  }
+
+  return `${HISTORICAL_PRICE_PATH}?${search.toString()}`
 }
 
 function buildSignature(timestamp: string, requestPathWithQuery: string): string {
@@ -248,6 +303,37 @@ export async function getTokenInfoByAddress(
   const url = buildApiUrl(requestPathWithQuery)
   const { status, statusText, rawText } = await sendOkxRequest(url, headers)
   const result = parseJson<OkxResponse<OkxTokenInfo>>(rawText)
+  const errorBody = parseJson<OkxErrorResponse>(rawText)
+
+  if (status < 200 || status >= 300) {
+    const upstreamMsg = errorBody ? `${errorBody.code ?? 'unknown'}: ${errorBody.msg ?? rawText}` : rawText
+    throw new Error(`OKX request failed: ${status} ${statusText}; upstream=${upstreamMsg}`)
+  }
+
+  if (!result) {
+    throw new Error('OKX API returned non-JSON response')
+  }
+
+  if (result.code !== '0') {
+    throw new Error(`OKX API error: ${result.code}: ${result.msg || 'unknown error'}`)
+  }
+
+  return result.data[0] ?? null
+}
+
+export async function getPriceByAddress(
+  params: GetPriceByAddressParams
+): Promise<OkxHistoricalPriceData | null> {
+  assertCredentials()
+
+  const timestamp = buildOkxTimestamp()
+  const requestPathWithQuery = buildHistoricalPricePath(params)
+  const signature = buildSignature(timestamp, requestPathWithQuery)
+
+  const headers = buildAuthHeaders(timestamp, signature)
+  const url = buildApiUrl(requestPathWithQuery)
+  const { status, statusText, rawText } = await sendOkxRequest(url, headers)
+  const result = parseJson<OkxResponse<OkxHistoricalPriceData>>(rawText)
   const errorBody = parseJson<OkxErrorResponse>(rawText)
 
   if (status < 200 || status >= 300) {

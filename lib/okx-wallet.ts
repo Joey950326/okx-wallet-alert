@@ -4,6 +4,7 @@ import dns from 'node:dns'
 import { Resolver } from 'node:dns/promises'
 import https from 'node:https'
 import { HttpsProxyAgent } from 'https-proxy-agent'
+import { GetTokenInfoByAddressSchema, GetPriceByAddressSchema, OkxPricePeriodSchema } from './schemas'
 
 const OKX_API_BASE_URL = (process.env.OKX_API_BASE_URL || 'https://web3.okx.com').replace(/\/+$/, '')
 const OKX_API_KEY = process.env.OKX_API_KEY || process.env.API_KEY
@@ -15,10 +16,11 @@ const OKX_PROXY_URL = process.env.OKX_PROXY_URL || process.env.HTTPS_PROXY || pr
 const TOKEN_DETAIL_PATH = '/api/v5/wallet/token/token-detail'
 const HISTORICAL_PRICE_PATH = '/api/v5/wallet/token/historical-price'
 
-export interface GetTokenInfoByAddressParams {
-  chainIndex: string
-  tokenAddress?: string
-}
+import type { GetTokenInfoByAddressInput, GetPriceByAddressInput, OkxPricePeriod } from './schemas'
+
+// Re-export for backward compatibility
+export type GetTokenInfoByAddressParams = GetTokenInfoByAddressInput
+export type GetPriceByAddressParams = GetPriceByAddressInput
 
 export interface OkxTokenInfo {
   logoUrl?: string
@@ -44,18 +46,6 @@ export interface OkxTokenInfo {
   totalSupply?: string
   volume24h?: string
   marketCap?: string
-}
-
-export type OkxPricePeriod = '1m' | '5m' | '30m' | '1h' | '1d'
-
-export interface GetPriceByAddressParams {
-  chainIndex: string
-  tokenAddress?: string
-  limit?: string
-  cursor?: string
-  begin?: string
-  end?: string
-  period?: OkxPricePeriod
 }
 
 export interface OkxHistoricalPriceItem {

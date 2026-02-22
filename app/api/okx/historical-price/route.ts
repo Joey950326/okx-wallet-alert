@@ -1,53 +1,47 @@
 import { NextResponse } from 'next/server'
 
-import { getPriceByAddress, type OkxPricePeriod } from '@/lib/okx-wallet'
+import { getPriceByAddress } from '@/lib/okx-wallet'
+import { GetPriceByAddressSchema } from '@/lib/schemas'
 
 export const runtime = 'nodejs'
-
-const PERIODS: OkxPricePeriod[] = ['1m', '5m', '30m', '1h', '1d']
 
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
 
-    const chainIndex = searchParams.get('chainIndex')
-    const tokenAddress = searchParams.get('tokenAddress')
-    const limit = searchParams.get('limit')
-    const cursor = searchParams.get('cursor')
-    const begin = searchParams.get('begin')
-    const end = searchParams.get('end')
-    const period = searchParams.get('period')
+    // Validate query params using Zod schema
+    const paramsResult = GetPriceByAddressSchema.safeParse({
+      chainIndex: searchParams.get('chainIndex'),
+      tokenAddress: searchParams.get('tokenAddress'),
+      limit: searchParams.get('limit'),
+      cursor: searchParams.get('cursor'),
+      begin: searchParams.get('begin'),
+      end: searchParams.get('end'),
+      period: searchParams.get('period'),
+    })
 
-    if (!chainIndex) {
+    if (!paramsResult.success) {
+      const errors = paramsResult.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; ')
       return NextResponse.json(
         {
           code: '400',
-          msg: 'Missing required query param: chainIndex',
+          msg: `Invalid query parameters: ${errors}`,
           data: null,
         },
         { status: 400 }
       )
     }
 
-    if (period && !PERIODS.includes(period as OkxPricePeriod)) {
-      return NextResponse.json(
-        {
-          code: '400',
-          msg: 'Invalid query param: period. Allowed values: 1m, 5m, 30m, 1h, 1d',
-          data: null,
-        },
-        { status: 400 }
-      )
-    }
+    const validatedParams = paramsResult.data
 
     const data = await getPriceByAddress({
-      chainIndex,
-      tokenAddress: tokenAddress ?? undefined,
-      limit: limit ?? undefined,
-      cursor: cursor ?? undefined,
-      begin: begin ?? undefined,
-      end: end ?? undefined,
-      period: (period as OkxPricePeriod | null) ?? undefined,
+      chainIndex: validatedParams.chainIndex,
+      tokenAddress: validatedParams.tokenAddress,
+      limit: validatedParams.limit,
+      cursor: validatedParams.cursor,
+      begin: validatedParams.begin,
+      end: validatedParams.end,
+      period: validatedParams.period,
     })
 
     return NextResponse.json({

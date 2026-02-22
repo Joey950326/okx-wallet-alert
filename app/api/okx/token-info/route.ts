@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 
 import { getTokenInfoByAddress } from '@/lib/okx-wallet'
+import { GetTokenInfoByAddressSchema } from '@/lib/schemas'
 
 export const runtime = 'nodejs'
 
@@ -8,22 +9,31 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
     const chainIndex = searchParams.get('chainIndex')
-    const tokenAddressParam = searchParams.get('tokenAddress')
+    const tokenAddress = searchParams.get('tokenAddress')
 
-    if (!chainIndex) {
+    // Validate query params using Zod schema
+    const paramsResult = GetTokenInfoByAddressSchema.safeParse({
+      chainIndex,
+      tokenAddress,
+    })
+
+    if (!paramsResult.success) {
+      const errors = paramsResult.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; ')
       return NextResponse.json(
         {
           code: '400',
-          msg: 'Missing required query param: chainIndex',
+          msg: `Invalid query parameters: ${errors}`,
           data: null,
         },
         { status: 400 }
       )
     }
 
+    const validatedParams = paramsResult.data
+
     const tokenInfo = await getTokenInfoByAddress({
-      chainIndex, // solana: 501, 具体链的chainIndex可以参考OKX文档：https://web3.okx.com/zh-hans/build/docs/waas/walletapi-resources-supported-networks
-      tokenAddress: tokenAddressParam ?? '',
+      chainIndex: validatedParams.chainIndex,
+      tokenAddress: validatedParams.tokenAddress,
     })
 
     return NextResponse.json({

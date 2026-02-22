@@ -1,17 +1,6 @@
-export type CustomMonitorTimeLevel = "FIVE_MINUTES" | "ONE_HOUR" | "ONE_DAY" | "ONE_WEEK"
+import { CustomMonitorRow, CustomMonitorTimeLevel, CustomMonitorRowSchema, BuildCustomMonitorInputSchema, CustomMonitorTimeLevelSchema } from './schemas'
 
-export type CustomMonitorRow = {
-  id: string
-  address: string
-  name: string
-  marketCap: string
-  price: string
-  timeValue: number
-  timeLevel: CustomMonitorTimeLevel
-  signal: string
-  signalTime: string
-  createdAt: string
-}
+export type { CustomMonitorRow, CustomMonitorTimeLevel }
 
 const LOCAL_STORAGE_KEY = "okx-wallet-alert.custom-monitors.v1"
 
@@ -27,12 +16,7 @@ function isBrowser() {
 }
 
 function isCustomMonitorTimeLevel(value: unknown): value is CustomMonitorTimeLevel {
-  return (
-    value === "FIVE_MINUTES" ||
-    value === "ONE_HOUR" ||
-    value === "ONE_DAY" ||
-    value === "ONE_WEEK"
-  )
+  return CustomMonitorTimeLevelSchema.safeParse(value).success
 }
 
 function toShortAddress(address: string) {
@@ -53,41 +37,19 @@ function createRowId() {
 }
 
 function parseRow(value: unknown): CustomMonitorRow | null {
-  if (!value || typeof value !== "object") {
+  // First validate basic structure
+  const result = CustomMonitorRowSchema.safeParse(value)
+  if (!result.success) {
     return null
   }
 
-  const row = value as Partial<CustomMonitorRow>
-  if (
-    typeof row.id !== "string" ||
-    typeof row.address !== "string" ||
-    typeof row.name !== "string" ||
-    typeof row.marketCap !== "string" ||
-    typeof row.price !== "string" ||
-    !isCustomMonitorTimeLevel(row.timeLevel) ||
-    typeof row.signal !== "string" ||
-    typeof row.signalTime !== "string" ||
-    typeof row.createdAt !== "string"
-  ) {
-    return null
-  }
-
+  const row = result.data
   const normalizedTimeValue =
-    typeof row.timeValue === "number" && Number.isFinite(row.timeValue) && row.timeValue > 0
-      ? Math.floor(row.timeValue)
-      : 1
+    Number.isFinite(row.timeValue) && row.timeValue > 0 ? Math.floor(row.timeValue) : 1
 
   return {
-    id: row.id,
-    address: row.address,
-    name: row.name,
-    marketCap: row.marketCap,
-    price: row.price,
+    ...row,
     timeValue: normalizedTimeValue,
-    timeLevel: row.timeLevel,
-    signal: row.signal,
-    signalTime: row.signalTime,
-    createdAt: row.createdAt,
   }
 }
 
@@ -132,17 +94,22 @@ export function buildCustomMonitorRow(input: {
   timeLevel: CustomMonitorTimeLevel
   timeValue: number
 }): CustomMonitorRow {
-  const normalizedAddress = input.address.trim()
-  const normalizedTimeValue = Number.isFinite(input.timeValue) && input.timeValue > 0 ? Math.floor(input.timeValue) : 1
+  // Validate input using schema
+  const validated = BuildCustomMonitorInputSchema.parse(input)
+
+  const normalizedTimeValue =
+    Number.isFinite(validated.timeValue) && validated.timeValue > 0
+      ? Math.floor(validated.timeValue)
+      : 1
 
   return {
     id: createRowId(),
-    address: normalizedAddress,
-    name: toShortAddress(normalizedAddress),
+    address: validated.address,
+    name: toShortAddress(validated.address),
     marketCap: "--",
     price: "--",
     timeValue: normalizedTimeValue,
-    timeLevel: input.timeLevel,
+    timeLevel: validated.timeLevel,
     signal: "--",
     signalTime: "--",
     createdAt: new Date().toISOString(),

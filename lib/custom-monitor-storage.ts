@@ -1,4 +1,4 @@
-export type CustomMonitorTimeLevel = "FIVE_MINUTES" | "ONE_HOUR" | "ONE_DAY"
+export type CustomMonitorTimeLevel = "FIVE_MINUTES" | "ONE_HOUR" | "ONE_DAY" | "ONE_WEEK"
 
 export type CustomMonitorRow = {
   id: string
@@ -15,10 +15,11 @@ export type CustomMonitorRow = {
 
 const LOCAL_STORAGE_KEY = "okx-wallet-alert.custom-monitors.v1"
 
-const TIME_LEVEL_LABEL_MAP: Record<CustomMonitorTimeLevel, "分钟" | "小时" | "天"> = {
+const TIME_LEVEL_LABEL_MAP: Record<CustomMonitorTimeLevel, "分钟" | "小时" | "天" | "周"> = {
   FIVE_MINUTES: "分钟",
   ONE_HOUR: "小时",
   ONE_DAY: "天",
+  ONE_WEEK: "周",
 }
 
 function isBrowser() {
@@ -26,7 +27,12 @@ function isBrowser() {
 }
 
 function isCustomMonitorTimeLevel(value: unknown): value is CustomMonitorTimeLevel {
-  return value === "FIVE_MINUTES" || value === "ONE_HOUR" || value === "ONE_DAY"
+  return (
+    value === "FIVE_MINUTES" ||
+    value === "ONE_HOUR" ||
+    value === "ONE_DAY" ||
+    value === "ONE_WEEK"
+  )
 }
 
 function toShortAddress(address: string) {
@@ -85,7 +91,7 @@ function parseRow(value: unknown): CustomMonitorRow | null {
   }
 }
 
-export function getTimeLevelLabel(level: CustomMonitorTimeLevel): "分钟" | "小时" | "天" {
+export function getTimeLevelLabel(level: CustomMonitorTimeLevel): "分钟" | "小时" | "天" | "周" {
   return TIME_LEVEL_LABEL_MAP[level]
 }
 

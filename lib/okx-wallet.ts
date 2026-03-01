@@ -4,7 +4,12 @@ import dns from 'node:dns'
 import { Resolver } from 'node:dns/promises'
 import https from 'node:https'
 import { HttpsProxyAgent } from 'https-proxy-agent'
-import { GetTokenInfoByAddressSchema, GetPriceByAddressSchema, OkxPricePeriodSchema } from './schemas'
+import {
+  GetTokenInfoByAddressSchema,
+  GetPriceByAddressSchema,
+  GetMarketCandlesSchema,
+  OkxPricePeriodSchema,
+} from './schemas'
 
 const OKX_API_BASE_URL = (process.env.OKX_API_BASE_URL || 'https://web3.okx.com').replace(/\/+$/, '')
 const OKX_API_KEY = process.env.OKX_API_KEY || process.env.API_KEY
@@ -15,12 +20,19 @@ const OKX_PROXY_URL = process.env.OKX_PROXY_URL || process.env.HTTPS_PROXY || pr
 
 const TOKEN_DETAIL_PATH = '/api/v5/wallet/token/token-detail'
 const HISTORICAL_PRICE_PATH = '/api/v5/wallet/token/historical-price'
+const MARKET_CANDLES_PATH = '/api/v6/dex/market/candles'
 
-import type { GetTokenInfoByAddressInput, GetPriceByAddressInput, OkxPricePeriod } from './schemas'
+import type {
+  GetTokenInfoByAddressInput,
+  GetPriceByAddressInput,
+  GetMarketCandlesInput,
+  OkxPricePeriod,
+} from './schemas'
 
 // Re-export for backward compatibility
 export type GetTokenInfoByAddressParams = GetTokenInfoByAddressInput
 export type GetPriceByAddressParams = GetPriceByAddressInput
+export type GetMarketCandlesParams = GetMarketCandlesInput
 
 export interface OkxTokenInfo {
   logoUrl?: string
@@ -56,6 +68,17 @@ export interface OkxHistoricalPriceItem {
 export interface OkxHistoricalPriceData {
   cursor?: string
   prices: OkxHistoricalPriceItem[]
+}
+
+export interface OkxMarketCandleItem {
+  ts: string
+  o: string
+  h: string
+  l: string
+  c: string
+  vol: string
+  volUsd: string
+  confirm: string
 }
 
 interface OkxResponse<T> {
@@ -127,6 +150,44 @@ function buildHistoricalPricePath(params: GetPriceByAddressParams): string {
   }
 
   return `${HISTORICAL_PRICE_PATH}?${search.toString()}`
+}
+
+function buildMarketCandlesPath(params: GetMarketCandlesParams): string {
+  const search = new URLSearchParams({
+    chainIndex: params.chainIndex,
+    tokenContractAddress: params.tokenContractAddress,
+  })
+
+  if (params.after !== undefined) {
+    search.set('after', params.after)
+  }
+
+  if (params.before !== undefined) {
+    search.set('before', params.before)
+  }
+
+  if (params.bar !== undefined) {
+    search.set('bar', params.bar)
+  }
+
+  if (params.limit !== undefined) {
+    search.set('limit', params.limit)
+  }
+
+  return `${MARKET_CANDLES_PATH}?${search.toString()}`
+}
+
+function mapRawCandle(raw: string[]): OkxMarketCandleItem {
+  return {
+    ts: raw[0] ?? '',
+    o: raw[1] ?? '',
+    h: raw[2] ?? '',
+    l: raw[3] ?? '',
+    c: raw[4] ?? '',
+    vol: raw[5] ?? '',
+    volUsd: raw[6] ?? '',
+    confirm: raw[7] ?? '',
+  }
 }
 
 function buildSignature(timestamp: string, requestPathWithQuery: string): string {
@@ -340,4 +401,33 @@ export async function getPriceByAddress(
   }
 
   return result.data[0] ?? null
+}
+
+export async function getMarketCandles(params: GetMarketCandlesParams): Promise<OkxMarketCandleItem[]> {
+  assertCredentials()
+
+  const timestamp = buildOkxTimestamp()
+  const requestPathWithQuery = buildMarketCandlesPath(params)
+  const signature = buildSignature(timestamp, requestPathWithQuery)
+
+  const headers = buildAuthHeaders(timestamp, signature)
+  const url = buildApiUrl(requestPathWithQuery)
+  const { status, statusText, rawText } = await sendOkxRequest(url, headers)
+  const result = parseJson<OkxResponse<string[]>>(rawText)
+  const errorBody = parseJson<OkxErrorResponse>(rawText)
+
+  if (status < 200 || status >= 300) {
+    const upstreamMsg = errorBody ? `${errorBody.code ?? 'unknown'}: ${errorBody.msg ?? rawText}` : rawText
+    throw new Error(`OKX request failed: ${status} ${statusText}; upstream=${upstreamMsg}`)
+  }
+
+  if (!result) {
+    throw new Error('OKX API returned non-JSON response')
+  }
+
+  if (result.code !== '0') {
+    throw new Error(`OKX API error: ${result.code}: ${result.msg || 'unknown error'}`)
+  }
+
+  return result.data.map(mapRawCandle)
 }

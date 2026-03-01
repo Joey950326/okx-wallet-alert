@@ -40,6 +40,59 @@ export const GetPriceByAddressSchema = z.object({
 export type GetPriceByAddressInput = z.infer<typeof GetPriceByAddressSchema>
 
 // ============================================================================
+// OKX Market Candles API
+// ============================================================================
+
+export const OkxMarketCandleBarSchema = z.enum([
+  '1s',
+  '1m',
+  '3m',
+  '5m',
+  '15m',
+  '30m',
+  '1H',
+  '2H',
+  '4H',
+  '6H',
+  '12H',
+  '1D',
+  '1W',
+  '1M',
+  '3M',
+  '6Hutc',
+  '12Hutc',
+  '1Dutc',
+  '1Wutc',
+  '1Mutc',
+  '3Mutc',
+])
+
+export type OkxMarketCandleBar = z.infer<typeof OkxMarketCandleBarSchema>
+
+export const GetMarketCandlesSchema = z.object({
+  chainIndex: z
+    .string()
+    .trim()
+    .min(1, 'chainIndex is required')
+    .regex(/^\d+$/, 'chainIndex must be numeric'),
+  tokenContractAddress: z.string().trim().min(1, 'tokenContractAddress is required'),
+  after: z.string().optional(),
+  before: z.string().optional(),
+  bar: OkxMarketCandleBarSchema.optional(),
+  limit: z
+    .string()
+    .optional()
+    .refine((val) => {
+      if (val === undefined) return true
+      if (!/^\d+$/.test(val)) return false
+      const num = Number(val)
+      return num >= 1 && num <= 299
+    }, 'limit must be an integer between 1 and 299'),
+})
+
+export type GetMarketCandlesInput = z.infer<typeof GetMarketCandlesSchema>
+
+// ============================================================================
 // Custom Monitor Storage
 // ============================================================================
 

@@ -8,12 +8,13 @@ import { cn } from "@/lib/utils"
 
 export type NavItem = {
   title: string
-  href: "/okx-jingou" | "/custom"
+  href: "/okx-jingou" | "/custom" | "/get-json"
 }
 
 const navItems: NavItem[] = [
   { title: "OKX金狗", href: "/okx-jingou" },
   { title: "自定义", href: "/custom" },
+  { title: "获取JSON", href: "/get-json" },
 ]
 
 type SidebarNavProps = {

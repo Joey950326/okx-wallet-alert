@@ -32,6 +32,7 @@ const CHAIN_OPTIONS: ChainOption[] = [
 ]
 
 const PERIOD_OPTIONS: PeriodOption[] = [
+  { label: "1m", value: "1m" },
   { label: "5m", value: "5m" },
   { label: "15m", value: "15m" },
   { label: "1h", value: "1H" },
@@ -43,7 +44,7 @@ const PERIOD_OPTIONS: PeriodOption[] = [
 export default function GetJsonPage() {
   const [chainIndex, setChainIndex] = React.useState(CHAIN_OPTIONS[0]?.value ?? "503")
   const [tokenAddress, setTokenAddress] = React.useState("")
-  const [periodMode, setPeriodMode] = React.useState<string>(PERIOD_OPTIONS[0]?.value ?? "5m")
+  const [periodMode, setPeriodMode] = React.useState<string>("4H")
   const [customPeriod, setCustomPeriod] = React.useState("")
   const [startTime, setStartTime] = React.useState("")
   const [endTime, setEndTime] = React.useState("")
@@ -57,7 +58,7 @@ export default function GetJsonPage() {
   const resetForm = React.useCallback(() => {
     setChainIndex(CHAIN_OPTIONS[0]?.value ?? "503")
     setTokenAddress("")
-    setPeriodMode(PERIOD_OPTIONS[0]?.value ?? "5m")
+    setPeriodMode("4H")
     setCustomPeriod("")
     setStartTime("")
     setEndTime("")

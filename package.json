@@ -10,7 +10,13 @@
     "db:seed": "bunx --bun tsx /prisma/seed.ts",
     "db:generate": "bunx --bun prisma generate",
     "db:migrate": "bunx --bun prisma migrate dev --name",
-    "db:studio": "bunx --bun prisma studio"
+    "db:studio": "bunx --bun prisma studio",
+    "pm2:start": "next build && pm2 start ecosystem.config.cjs && pm2 save",
+    "pm2:restart": "next build && pm2 restart okx-wallet-alert",
+    "pm2:stop": "pm2 stop okx-wallet-alert",
+    "pm2:delete": "pm2 delete okx-wallet-alert",
+    "pm2:logs": "pm2 logs okx-wallet-alert --lines 200",
+    "pm2:status": "pm2 status"
   },
   "type": "module",
   "dependencies": {

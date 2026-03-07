@@ -25,7 +25,7 @@ type ChainOption = {
 const CUSTOM_PERIOD = "custom"
 
 const CHAIN_OPTIONS: ChainOption[] = [
-  { label: "sol", value: "501" },
+  { label: "solana", value: "501" },
   { label: "bsc", value: "56" },
   { label: "eth", value: "1" },
   { label: "btc", value: "0" },
@@ -40,6 +40,18 @@ const PERIOD_OPTIONS: PeriodOption[] = [
   { label: "1d", value: "1D" },
   { label: "1w", value: "1W" },
 ]
+
+function buildSecuritySearchUrl(address: string) {
+  const url = new URL("https://x.com/search")
+  url.searchParams.set("q", `from:badattrading_ ${address}`)
+  url.searchParams.set("src", "typed_query")
+  url.searchParams.set("f", "top")
+  return url.toString()
+}
+
+function buildTokenDetailUrl(chainLabel: string, address: string) {
+  return `https://web3.okx.com/zh-hans/token/${encodeURIComponent(chainLabel)}/${encodeURIComponent(address)}`
+}
 
 export default function GetJsonPage() {
   const [chainIndex, setChainIndex] = React.useState(CHAIN_OPTIONS[0]?.value ?? "503")
@@ -174,13 +186,51 @@ export default function GetJsonPage() {
     URL.revokeObjectURL(objectUrl)
   }, [resultJson])
 
+  const handleSecurityQuery = React.useCallback(() => {
+    const normalizedAddress = tokenAddress.trim()
+    if (!normalizedAddress) {
+      setErrorMessage("代币地址不能为空。")
+      return
+    }
+
+    setErrorMessage(null)
+    const targetUrl = buildSecuritySearchUrl(normalizedAddress)
+    const newTab = window.open(targetUrl, "_blank")
+    // Fallback when popup/tab opening is blocked by browser policies.
+    if (!newTab) {
+      window.location.assign(targetUrl)
+    }
+  }, [tokenAddress])
+
+  const handleDetailPage = React.useCallback(() => {
+    const normalizedAddress = tokenAddress.trim()
+    if (!normalizedAddress) {
+      setErrorMessage("代币地址不能为空。")
+      return
+    }
+
+    const selectedChain = CHAIN_OPTIONS.find((option) => option.value === chainIndex)
+    const chainLabel = selectedChain?.label
+    if (!chainLabel) {
+      setErrorMessage("未找到对应链信息，请重新选择 chainIndex。")
+      return
+    }
+
+    setErrorMessage(null)
+    const targetUrl = buildTokenDetailUrl(chainLabel, normalizedAddress)
+    const newTab = window.open(targetUrl, "_blank")
+    if (!newTab) {
+      window.location.assign(targetUrl)
+    }
+  }, [chainIndex, tokenAddress])
+
   return (
     <section className="space-y-6">
       <div className="rounded-lg border bg-card p-4 md:p-6">
         <div className="space-y-2">
           <h1 className="text-2xl font-semibold tracking-tight">获取JSON</h1>
           <p className="text-muted-foreground">
-            输入代币地址和时间范围后，调用 K 线接口并将结果导出为 JSON。
+            输入代币地址后，可直接进行安全查询，或结合时间范围调用 K 线接口并导出 JSON。
           </p>
         </div>
       </div>
@@ -216,6 +266,9 @@ export default function GetJsonPage() {
               placeholder="请输入代币地址"
               autoComplete="off"
             />
+            <p className="text-xs text-muted-foreground">
+              安全查询会跳转到 X 中 `badattrading_` 账号的相关搜索结果。
+            </p>
           </div>
 
           <div className="space-y-2">
@@ -284,6 +337,12 @@ export default function GetJsonPage() {
             </Button>
             <Button type="submit" disabled={isSubmitting}>
               {isSubmitting ? "请求中..." : "确定"}
+            </Button>
+            <Button type="button" variant="secondary" onClick={handleSecurityQuery} disabled={!tokenAddress.trim()}>
+              安全查询
+            </Button>
+            <Button type="button" variant="secondary" onClick={handleDetailPage} disabled={!tokenAddress.trim()}>
+              详情页
             </Button>
           </div>
         </form>

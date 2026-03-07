@@ -119,8 +119,8 @@ export default function GetJsonPage() {
       query.set('chainIndex', chainIndex)
       query.set('tokenContractAddress', normalizedAddress)
       query.set('bar', resolvedPeriod)
-      if (startTimestamp !== undefined) query.set('after', String(startTimestamp))
-      if (endTimestamp !== undefined) query.set('before', String(endTimestamp))
+      if (startTimestamp !== undefined) query.set('before', String(startTimestamp))
+      if (endTimestamp !== undefined) query.set('after', String(endTimestamp))
       query.set('limit', '299')
 
       setIsSubmitting(true)

@@ -1,0 +1,860 @@
+"use client"
+
+import * as React from "react"
+
+import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+
+type ChainOption = {
+  label: string
+  value: string
+}
+
+type PeriodOption = {
+  label: string
+  value: string
+}
+
+type VolumeAlertStatus = "ONLINE" | "PAUSED"
+
+type VolumeMomentum = "UP" | "DOWN" | "NONE" | "ERROR"
+
+type VolumeAlertItem = {
+  id: string
+  chainIndex: string
+  chainLabel: string
+  address: string
+  tokenName: string
+  period: string
+  status: VolumeAlertStatus
+  momentum: VolumeMomentum
+  momentumText: string
+  momentumRatio: number | null
+  lastCheckedAt: string | null
+  createdAt: string
+}
+
+type LegacyVolumeAlertItem = Omit<VolumeAlertItem, "status"> & {
+  status: VolumeAlertStatus | "RUNNING"
+}
+
+type ApiResponse<T> = {
+  code: string
+  msg: string
+  data: T
+}
+
+type CandleItem = {
+  ts: string
+  o: string
+  h: string
+  l: string
+  c: string
+  vol: string
+  volUsd: string
+  confirm: string
+}
+
+type CreateFormState = {
+  chainIndex: string
+  address: string
+  periodMode: string
+  customPeriod: string
+}
+
+type FeedbackDialogState = {
+  open: boolean
+  title: string
+  description: string
+}
+
+const PAGE_SIZE = 10
+const CUSTOM_PERIOD = "custom"
+const POLL_OFFSET_MS = 5 * 1000
+const REQUEST_GAP_MS = 1500
+
+const CHAIN_OPTIONS: ChainOption[] = [
+  { label: "solana", value: "501" },
+  { label: "bsc", value: "56" },
+  { label: "eth", value: "1" },
+  { label: "btc", value: "0" },
+]
+
+const PERIOD_OPTIONS: PeriodOption[] = [
+  { label: "1m", value: "1m" },
+  { label: "5m", value: "5m" },
+  { label: "15m", value: "15m" },
+  { label: "1h", value: "1H" },
+  { label: "4h", value: "4H" },
+  { label: "1d", value: "1D" },
+  { label: "1w", value: "1W" },
+]
+
+const INITIAL_FORM_STATE: CreateFormState = {
+  chainIndex: CHAIN_OPTIONS[0]?.value ?? "501",
+  address: "",
+  periodMode: "15m",
+  customPeriod: "",
+}
+
+function normalizeAddress(value: string) {
+  return value.trim()
+}
+
+function toAddressKey(value: string) {
+  return value.trim().toLowerCase()
+}
+
+function toPeriodMs(period: string) {
+  const normalized = period.trim()
+  const match = normalized.match(/^(\d+)\s*([a-zA-Z]+)$/)
+  if (!match) {
+    return 15 * 60 * 1000
+  }
+
+  const value = Number(match[1])
+  const unit = (match[2] ?? "").toLowerCase()
+  if (!Number.isFinite(value) || value <= 0) {
+    return 15 * 60 * 1000
+  }
+
+  if (unit === "s") {
+    return value * 1000
+  }
+  if (unit === "m") {
+    return value * 60 * 1000
+  }
+  if (unit === "h") {
+    return value * 60 * 60 * 1000
+  }
+  if (unit === "d") {
+    return value * 24 * 60 * 60 * 1000
+  }
+  if (unit === "w") {
+    return value * 7 * 24 * 60 * 60 * 1000
+  }
+
+  return 15 * 60 * 1000
+}
+
+function analyzeMomentum(candles: CandleItem[]): {
+  momentum: VolumeMomentum
+  momentumText: string
+  momentumRatio: number | null
+} {
+  if (!Array.isArray(candles) || candles.length < 3) {
+    return {
+      momentum: "NONE",
+      momentumText: "K线不足",
+      momentumRatio: null,
+    }
+  }
+
+  const sorted = [...candles].sort((a, b) => Number(a.ts) - Number(b.ts))
+  // Compare second latest closed candle with third latest one.
+  // The latest candle can still be open and should not be used.
+  const prev = sorted[sorted.length - 3]
+  const current = sorted[sorted.length - 2]
+
+  const prevVol = Number(prev.vol)
+  const currentVol = Number(current.vol)
+  const currentOpen = Number(current.o)
+  const currentClose = Number(current.c)
+
+  if (!Number.isFinite(prevVol) || !Number.isFinite(currentVol) || !Number.isFinite(currentOpen) || !Number.isFinite(currentClose)) {
+    return {
+      momentum: "ERROR",
+      momentumText: "数据异常",
+      momentumRatio: null,
+    }
+  }
+
+  const ratio = prevVol > 0 ? currentVol / prevVol : null
+
+  if (currentVol >= prevVol * 3) {
+    if (currentClose > currentOpen) {
+      return {
+        momentum: "UP",
+        momentumText: "增量上涨",
+        momentumRatio: ratio,
+      }
+    }
+
+    if (currentOpen > currentClose) {
+      return {
+        momentum: "DOWN",
+        momentumText: "增量下跌",
+        momentumRatio: ratio,
+      }
+    }
+  }
+
+  return {
+    momentum: "NONE",
+    momentumText: "无明显动量",
+    momentumRatio: ratio,
+  }
+}
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms)
+  })
+}
+
+function getDelayToNextBoundaryWithOffset(intervalMs: number, offsetMs: number, nowMs = Date.now()) {
+  const currentCycleStart = Math.floor(nowMs / intervalMs) * intervalMs
+  let nextRunAt = currentCycleStart + offsetMs
+  if (nextRunAt <= nowMs) {
+    nextRunAt += intervalMs
+  }
+
+  return Math.max(0, nextRunAt - nowMs)
+}
+
+async function fetchCandles(params: {
+  chainIndex: string
+  address: string
+  period: string
+  limit: string
+}): Promise<ApiResponse<CandleItem[]>> {
+  const query = new URLSearchParams()
+  query.set("chainIndex", params.chainIndex)
+  query.set("tokenContractAddress", params.address)
+  query.set("bar", params.period)
+  query.set("limit", params.limit)
+
+  const response = await fetch(`/api/okx/candles?${query.toString()}`, {
+    method: "GET",
+    cache: "no-store",
+  })
+
+  const payload = (await response.json()) as ApiResponse<CandleItem[]>
+  if (!response.ok) {
+    return {
+      code: payload.code ?? String(response.status),
+      msg: payload.msg ?? "请求失败",
+      data: [],
+    }
+  }
+
+  return payload
+}
+
+export default function VolumeAlertPage() {
+  const [rows, setRows] = React.useState<VolumeAlertItem[]>([])
+  const [isLoaded, setIsLoaded] = React.useState(false)
+  const [dialogOpen, setDialogOpen] = React.useState(false)
+  const [formState, setFormState] = React.useState<CreateFormState>(INITIAL_FORM_STATE)
+  const [formError, setFormError] = React.useState<string | null>(null)
+  const [isSubmitting, setIsSubmitting] = React.useState(false)
+  const [isTestingTelegram, setIsTestingTelegram] = React.useState(false)
+  const [pageIndex, setPageIndex] = React.useState(0)
+  const [feedbackDialog, setFeedbackDialog] = React.useState<FeedbackDialogState>({
+    open: false,
+    title: "提示",
+    description: "",
+  })
+  const [deleteTarget, setDeleteTarget] = React.useState<VolumeAlertItem | null>(null)
+  const [isDeleting, setIsDeleting] = React.useState(false)
+  const requestQueueRef = React.useRef<Promise<void>>(Promise.resolve())
+
+  const openFeedbackDialog = React.useCallback((title: string, description: string) => {
+    setFeedbackDialog({ open: true, title, description })
+  }, [])
+
+  const fetchRows = React.useCallback(async () => {
+    try {
+      const response = await fetch("/api/volume-alert", {
+        method: "GET",
+        cache: "no-store",
+      })
+      const payload = (await response.json()) as ApiResponse<LegacyVolumeAlertItem[]>
+
+      if (!response.ok || payload.code !== "0" || !Array.isArray(payload.data)) {
+        setRows([])
+        return
+      }
+
+      const normalizedRows = payload.data.map((item) => ({
+        ...item,
+        status: item.status === "RUNNING" ? "ONLINE" : item.status,
+      }))
+      setRows(normalizedRows)
+    } catch {
+      setRows([])
+    } finally {
+      setIsLoaded(true)
+    }
+  }, [])
+
+  React.useEffect(() => {
+    void fetchRows()
+  }, [fetchRows])
+
+  const resetForm = React.useCallback(() => {
+    setFormState(INITIAL_FORM_STATE)
+    setFormError(null)
+  }, [])
+
+  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE))
+  const currentPage = Math.min(pageIndex + 1, totalPages)
+  const start = pageIndex * PAGE_SIZE
+  const end = start + PAGE_SIZE
+  const pagedRows = rows.slice(start, end)
+
+  const handleDialogOpenChange = React.useCallback(
+    (open: boolean) => {
+      setDialogOpen(open)
+      if (!open) {
+        resetForm()
+      }
+    },
+    [resetForm]
+  )
+
+  const handleDelete = React.useCallback((item: VolumeAlertItem) => {
+    setDeleteTarget(item)
+  }, [])
+
+  const handleConfirmDelete = React.useCallback(async () => {
+    if (!deleteTarget || isDeleting) {
+      return
+    }
+
+    setIsDeleting(true)
+    try {
+      const response = await fetch(`/api/volume-alert?id=${encodeURIComponent(deleteTarget.id)}`, {
+        method: "DELETE",
+      })
+      const payload = (await response.json()) as ApiResponse<null>
+
+      if (!response.ok || payload.code !== "0") {
+        openFeedbackDialog("删除失败", payload.msg || "删除失败")
+        return
+      }
+
+      const nextRows = rows.filter((row) => row.id !== deleteTarget.id)
+      setRows(nextRows)
+      setPageIndex((prev) => {
+        const maxPageIndex = Math.max(0, Math.ceil(nextRows.length / PAGE_SIZE) - 1)
+        return Math.min(prev, maxPageIndex)
+      })
+      setDeleteTarget(null)
+      openFeedbackDialog("删除成功", "该量能通知已删除。")
+    } catch {
+      openFeedbackDialog("删除失败", "删除失败，请稍后重试")
+    } finally {
+      setIsDeleting(false)
+    }
+  }, [deleteTarget, isDeleting, openFeedbackDialog, rows])
+
+  const handleTogglePause = React.useCallback(
+    async (id: string) => {
+      try {
+        const response = await fetch("/api/volume-alert", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id, action: "togglePause" }),
+        })
+
+        const payload = (await response.json()) as ApiResponse<VolumeAlertItem>
+        if (!response.ok || payload.code !== "0" || !payload.data) {
+          openFeedbackDialog("更新失败", payload.msg || "更新失败")
+          return
+        }
+
+        setRows((prev) => prev.map((row) => (row.id === id ? payload.data : row)))
+      } catch {
+        openFeedbackDialog("更新失败", "更新失败，请稍后重试")
+      }
+    },
+    [openFeedbackDialog]
+  )
+
+  const handleTestTelegram = React.useCallback(async () => {
+    if (isTestingTelegram) {
+      return
+    }
+
+    setIsTestingTelegram(true)
+    try {
+      const firstRow = rows[0]
+      const response = await fetch("/api/telegram/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          address: firstRow?.address,
+          chain: firstRow?.chainLabel,
+        }),
+      })
+      const payload = (await response.json()) as ApiResponse<{ messageId?: number } | null>
+
+      if (!response.ok || payload.code !== "0") {
+        openFeedbackDialog("测试电报失败", payload.msg || "测试电报失败")
+        return
+      }
+
+      openFeedbackDialog("测试电报成功", "测试电报发送成功")
+    } catch {
+      openFeedbackDialog("测试电报失败", "测试电报失败，请稍后重试")
+    } finally {
+      setIsTestingTelegram(false)
+    }
+  }, [isTestingTelegram, openFeedbackDialog, rows])
+
+  const resolvedPeriod =
+    formState.periodMode === CUSTOM_PERIOD ? formState.customPeriod.trim() : formState.periodMode
+
+  const handleCreateSubmit = React.useCallback(
+    async (event: React.FormEvent<HTMLFormElement>) => {
+      event.preventDefault()
+      setFormError(null)
+
+      const address = normalizeAddress(formState.address)
+      if (!address) {
+        setFormError("地址不能为空。")
+        return
+      }
+
+      if (!resolvedPeriod) {
+        setFormError("请选择或输入时间周期。")
+        return
+      }
+
+      const duplicated = rows.some((row) => toAddressKey(row.address) === toAddressKey(address))
+      if (duplicated) {
+        setFormError("该地址已存在，请勿重复添加。")
+        return
+      }
+
+      setIsSubmitting(true)
+      try {
+        const candlesPayload = await fetchCandles({
+          chainIndex: formState.chainIndex,
+          address,
+          period: resolvedPeriod,
+          limit: "2",
+        })
+
+        if (candlesPayload.code !== "0" || !Array.isArray(candlesPayload.data) || candlesPayload.data.length === 0) {
+          setFormError(candlesPayload.msg || "调用 /api/okx/candles 失败")
+          openFeedbackDialog("添加失败", "未获取到有效K线数据")
+          return
+        }
+
+        const selectedChain = CHAIN_OPTIONS.find((option) => option.value === formState.chainIndex)
+        const response = await fetch("/api/volume-alert", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chainIndex: formState.chainIndex,
+            chainLabel: selectedChain?.label ?? "unknown",
+            address,
+            period: resolvedPeriod,
+          }),
+        })
+        const payload = (await response.json()) as ApiResponse<VolumeAlertItem>
+
+        if (!response.ok || payload.code !== "0" || !payload.data) {
+          setFormError(payload.msg || "添加失败")
+          openFeedbackDialog("添加失败", payload.msg || "添加失败")
+          return
+        }
+
+        setRows((prev) => [payload.data, ...prev])
+        setPageIndex(0)
+        setDialogOpen(false)
+        resetForm()
+        openFeedbackDialog("添加成功", "量能通知已创建并开始轮询。")
+      } catch {
+        setFormError("请求失败，请稍后重试。")
+        openFeedbackDialog("添加失败", "添加失败，请稍后重试")
+      } finally {
+        setIsSubmitting(false)
+      }
+    },
+    [formState, openFeedbackDialog, resetForm, resolvedPeriod, rows]
+  )
+
+  const scheduleSignature = React.useMemo(
+    () => rows.map((row) => `${row.id}:${row.status}:${row.period}:${row.chainIndex}:${row.address}`).join("|"),
+    [rows]
+  )
+
+  React.useEffect(() => {
+    if (!rows.length) {
+      return
+    }
+
+    const onlineRows = rows.filter((row) => row.status === "ONLINE")
+    if (!onlineRows.length) {
+      return
+    }
+
+    const timers: Array<ReturnType<typeof setInterval>> = []
+    const starters: Array<ReturnType<typeof setTimeout>> = []
+
+    const runCheck = async (row: VolumeAlertItem) => {
+      try {
+        const payload = await fetchCandles({
+          chainIndex: row.chainIndex,
+          address: row.address,
+          period: row.period,
+          limit: "5",
+        })
+
+        const now = new Date().toISOString()
+        if (payload.code !== "0" || !Array.isArray(payload.data) || payload.data.length === 0) {
+          const response = await fetch("/api/volume-alert", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              id: row.id,
+              action: "updateMomentum",
+              momentum: "ERROR",
+              momentumText: "检测失败",
+              momentumRatio: null,
+              lastCheckedAt: now,
+            }),
+          })
+
+          const patchPayload = (await response.json()) as ApiResponse<VolumeAlertItem>
+          if (response.ok && patchPayload.code === "0" && patchPayload.data) {
+            setRows((prev) => prev.map((item) => (item.id === row.id ? patchPayload.data : item)))
+          }
+          return
+        }
+
+        const momentumResult = analyzeMomentum(payload.data)
+        const response = await fetch("/api/volume-alert", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: row.id,
+            action: "updateMomentum",
+            momentum: momentumResult.momentum,
+            momentumText: momentumResult.momentumText,
+            momentumRatio: momentumResult.momentumRatio,
+            lastCheckedAt: now,
+          }),
+        })
+
+        const patchPayload = (await response.json()) as ApiResponse<VolumeAlertItem>
+        if (response.ok && patchPayload.code === "0" && patchPayload.data) {
+          setRows((prev) => prev.map((item) => (item.id === row.id ? patchPayload.data : item)))
+        }
+      } catch {
+        // Keep scheduler alive even if one polling task fails.
+      }
+    }
+
+    onlineRows.forEach((row) => {
+      const intervalMs = toPeriodMs(row.period)
+      const waitMs = getDelayToNextBoundaryWithOffset(intervalMs, POLL_OFFSET_MS)
+
+      const enqueueCheck = () => {
+        requestQueueRef.current = requestQueueRef.current
+          .then(async () => {
+            await runCheck(row)
+            await sleep(REQUEST_GAP_MS)
+          })
+          .catch(() => {
+            // Keep queue chain usable even if one task fails.
+          })
+      }
+
+      const starter = setTimeout(() => {
+        enqueueCheck()
+        const timer = setInterval(() => {
+          enqueueCheck()
+        }, intervalMs)
+        timers.push(timer)
+      }, waitMs)
+
+      starters.push(starter)
+    })
+
+    return () => {
+      starters.forEach((starter) => clearTimeout(starter))
+      timers.forEach((timer) => clearInterval(timer))
+    }
+  }, [scheduleSignature])
+
+  return (
+    <section className="space-y-6">
+      <div className="rounded-lg border bg-card p-4 md:p-6">
+        <div className="space-y-2">
+          <h1 className="text-2xl font-semibold tracking-tight">量能通知</h1>
+          <p className="text-muted-foreground">配置代币量能监控，系统会按时间周期自动检测增量上涨/下跌。</p>
+        </div>
+      </div>
+
+      <div className="rounded-lg border bg-card p-4 md:p-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold tracking-tight">功能区</h2>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" variant="outline" onClick={() => void handleTestTelegram()} disabled={isTestingTelegram}>
+              {isTestingTelegram ? "发送中..." : "测试电报"}
+            </Button>
+            <Button type="button" onClick={() => setDialogOpen(true)}>
+              增加
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-4 rounded-lg border bg-card p-4 md:p-6">
+        <h2 className="text-lg font-semibold tracking-tight">表格区</h2>
+
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="whitespace-nowrap">代币名称</TableHead>
+              <TableHead className="whitespace-nowrap">时间周期</TableHead>
+              <TableHead className="whitespace-nowrap">最新信息</TableHead>
+              <TableHead className="whitespace-nowrap">状态</TableHead>
+              <TableHead className="whitespace-nowrap">操作</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {!isLoaded ? (
+              <TableRow>
+                <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
+                  加载中...
+                </TableCell>
+              </TableRow>
+            ) : pagedRows.length ? (
+              pagedRows.map((row) => (
+                <TableRow key={row.id}>
+                  <TableCell className="whitespace-nowrap" title={`${row.chainLabel}: ${row.address}`}>
+                    {row.tokenName}
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap">{row.period}</TableCell>
+                  <TableCell>
+                    <div className="flex flex-col">
+                      <span>{row.momentumText}</span>
+                      {typeof row.momentumRatio === "number" ? (
+                        <span className="text-xs text-muted-foreground">动量对比: {row.momentumRatio.toFixed(2)}x</span>
+                      ) : null}
+                      {row.lastCheckedAt ? (
+                        <span className="text-xs text-muted-foreground">
+                          {new Date(row.lastCheckedAt).toLocaleString()}
+                        </span>
+                      ) : null}
+                    </div>
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap">{row.status === "ONLINE" ? "在线" : "暂停"}</TableCell>
+                  <TableCell>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="destructive"
+                        onClick={() => handleDelete(row)}
+                      >
+                        删除
+                      </Button>
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="outline"
+                        onClick={() => void handleTogglePause(row.id)}
+                      >
+                        {row.status === "ONLINE" ? "暂停" : "恢复"}
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))
+            ) : (
+              <TableRow>
+                <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
+                  暂无数据
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
+          <p className="text-sm text-muted-foreground">
+            第 {currentPage} / {totalPages} 页 · 每页 {PAGE_SIZE} 条
+          </p>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => setPageIndex((prev) => Math.max(0, prev - 1))}
+              disabled={pageIndex <= 0}
+            >
+              上一页
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => setPageIndex((prev) => Math.min(totalPages - 1, prev + 1))}
+              disabled={pageIndex >= totalPages - 1}
+            >
+              下一页
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <Dialog open={dialogOpen} onOpenChange={handleDialogOpenChange}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>增加表单</DialogTitle>
+            <DialogDescription>请填写主链、地址和时间周期，保存后将开启自动动量检测。</DialogDescription>
+          </DialogHeader>
+
+          <form className="mt-2 flex flex-col gap-4" onSubmit={(event) => void handleCreateSubmit(event)}>
+            <div className="space-y-2">
+              <label htmlFor="volume-chain-index" className="text-sm font-medium">
+                主链
+              </label>
+              <Select
+                value={formState.chainIndex}
+                onValueChange={(value) => setFormState((prev) => ({ ...prev, chainIndex: value }))}
+              >
+                <SelectTrigger id="volume-chain-index">
+                  <SelectValue placeholder="请选择主链" />
+                </SelectTrigger>
+                <SelectContent>
+                  {CHAIN_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="volume-address" className="text-sm font-medium">
+                地址
+              </label>
+              <Input
+                id="volume-address"
+                value={formState.address}
+                onChange={(event) => setFormState((prev) => ({ ...prev, address: event.target.value }))}
+                placeholder="请输入代币地址"
+                autoComplete="off"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="volume-period-mode" className="text-sm font-medium">
+                时间周期
+              </label>
+              <div className="grid gap-2 md:grid-cols-[1fr_1fr]">
+                <Select
+                  value={formState.periodMode}
+                  onValueChange={(value) => setFormState((prev) => ({ ...prev, periodMode: value }))}
+                >
+                  <SelectTrigger id="volume-period-mode">
+                    <SelectValue placeholder="请选择时间周期" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PERIOD_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                    <SelectItem value={CUSTOM_PERIOD}>自定义</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                {formState.periodMode === CUSTOM_PERIOD ? (
+                  <Input
+                    id="volume-custom-period"
+                    value={formState.customPeriod}
+                    onChange={(event) =>
+                      setFormState((prev) => ({ ...prev, customPeriod: event.target.value }))
+                    }
+                    placeholder="输入自定义周期，如 2H"
+                  />
+                ) : (
+                  <Input value={formState.periodMode} disabled readOnly aria-label="已选时间周期" />
+                )}
+              </div>
+            </div>
+
+            {formError ? <p className="text-sm text-destructive">{formError}</p> : null}
+
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setDialogOpen(false)} disabled={isSubmitting}>
+                取消
+              </Button>
+              <Button type="submit" disabled={isSubmitting}>
+                {isSubmitting ? "校验中..." : "保存"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleteTarget !== null} onOpenChange={(open) => (!open ? setDeleteTarget(null) : null)}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>删除确认</DialogTitle>
+            <DialogDescription>
+              {deleteTarget ? `确定删除 ${deleteTarget.tokenName} 的量能通知吗？` : "确定删除该量能通知吗？"}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setDeleteTarget(null)} disabled={isDeleting}>
+              取消
+            </Button>
+            <Button type="button" variant="destructive" onClick={() => void handleConfirmDelete()} disabled={isDeleting}>
+              {isDeleting ? "删除中..." : "确认删除"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={feedbackDialog.open}
+        onOpenChange={(open) =>
+          setFeedbackDialog((prev) => ({
+            ...prev,
+            open,
+          }))
+        }
+      >
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{feedbackDialog.title}</DialogTitle>
+            <DialogDescription>{feedbackDialog.description}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              onClick={() =>
+                setFeedbackDialog((prev) => ({
+                  ...prev,
+                  open: false,
+                }))
+              }
+            >
+              确定
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </section>
+  )
+}

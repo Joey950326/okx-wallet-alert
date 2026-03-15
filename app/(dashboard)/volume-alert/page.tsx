@@ -79,6 +79,13 @@ type FeedbackDialogState = {
   description: string
 }
 
+type DeleteDialogState = {
+  open: boolean
+  mode: "single" | "selected" | "all"
+  ids: string[]
+  description: string
+}
+
 type EditPeriodDialogState = {
   open: boolean
   target: VolumeAlertItem | null
@@ -127,6 +134,14 @@ function toAddressKey(value: string) {
 
 function buildTokenDetailUrl(chain: string, address: string) {
   return `https://web3.okx.com/zh-hans/token/${encodeURIComponent(chain)}/${encodeURIComponent(address)}`
+}
+
+function buildSecuritySearchUrl(address: string) {
+  const url = new URL("https://x.com/search")
+  url.searchParams.set("q", `from:badattrading_ ${address}`)
+  url.searchParams.set("src", "typed_query")
+  url.searchParams.set("f", "top")
+  return url.toString()
 }
 
 function toPeriodMs(period: string) {
@@ -274,12 +289,19 @@ export default function VolumeAlertPage() {
   const [isSubmitting, setIsSubmitting] = React.useState(false)
   const [isTestingTelegram, setIsTestingTelegram] = React.useState(false)
   const [pageIndex, setPageIndex] = React.useState(0)
+  const [addressFilter, setAddressFilter] = React.useState("")
   const [feedbackDialog, setFeedbackDialog] = React.useState<FeedbackDialogState>({
     open: false,
     title: "提示",
     description: "",
   })
-  const [deleteTarget, setDeleteTarget] = React.useState<VolumeAlertItem | null>(null)
+  const [deleteDialog, setDeleteDialog] = React.useState<DeleteDialogState>({
+    open: false,
+    mode: "single",
+    ids: [],
+    description: "",
+  })
+  const [selectedIds, setSelectedIds] = React.useState<string[]>([])
   const [isDeleting, setIsDeleting] = React.useState(false)
   const [editDialog, setEditDialog] = React.useState<EditPeriodDialogState>({
     open: false,
@@ -315,6 +337,20 @@ export default function VolumeAlertPage() {
     }
   }, [])
 
+  const handleSecurityCheck = React.useCallback(() => {
+    const address = formState.address.trim()
+    if (!address) {
+      openFeedbackDialog("提示", "请先输入代币地址。")
+      return
+    }
+
+    const targetUrl = buildSecuritySearchUrl(address)
+    const newTab = window.open(targetUrl, "_blank")
+    if (!newTab) {
+      window.location.assign(targetUrl)
+    }
+  }, [formState.address, openFeedbackDialog])
+
   const fetchRows = React.useCallback(async () => {
     try {
       const response = await fetch("/api/volume-alert", {
@@ -349,11 +385,32 @@ export default function VolumeAlertPage() {
     setFormError(null)
   }, [])
 
-  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE))
+  const filteredRows = React.useMemo(() => {
+    const keyword = addressFilter.trim().toLowerCase()
+    if (!keyword) {
+      return rows
+    }
+
+    return rows.filter((row) => row.address.toLowerCase().includes(keyword))
+  }, [addressFilter, rows])
+
+  React.useEffect(() => {
+    setPageIndex(0)
+  }, [addressFilter])
+
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE))
   const currentPage = Math.min(pageIndex + 1, totalPages)
   const start = pageIndex * PAGE_SIZE
   const end = start + PAGE_SIZE
-  const pagedRows = rows.slice(start, end)
+  const pagedRows = filteredRows.slice(start, end)
+  const filteredIds = React.useMemo(() => filteredRows.map((row) => row.id), [filteredRows])
+  const selectedIdSet = React.useMemo(() => new Set(selectedIds), [selectedIds])
+  const isAllFilteredSelected = filteredIds.length > 0 && filteredIds.every((id) => selectedIdSet.has(id))
+
+  React.useEffect(() => {
+    const rowIds = new Set(rows.map((row) => row.id))
+    setSelectedIds((prev) => prev.filter((id) => rowIds.has(id)))
+  }, [rows])
 
   const handleDialogOpenChange = React.useCallback(
     (open: boolean) => {
@@ -365,41 +422,107 @@ export default function VolumeAlertPage() {
     [resetForm]
   )
 
-  const handleDelete = React.useCallback((item: VolumeAlertItem) => {
-    setDeleteTarget(item)
+  const toggleSelectItem = React.useCallback((id: string, checked: boolean) => {
+    setSelectedIds((prev) => {
+      if (checked) {
+        if (prev.includes(id)) {
+          return prev
+        }
+        return [...prev, id]
+      }
+
+      return prev.filter((itemId) => itemId !== id)
+    })
   }, [])
 
+  const toggleSelectAllFiltered = React.useCallback(
+    (checked: boolean) => {
+      if (checked) {
+        setSelectedIds((prev) => Array.from(new Set([...prev, ...filteredIds])))
+        return
+      }
+
+      const filteredIdSet = new Set(filteredIds)
+      setSelectedIds((prev) => prev.filter((id) => !filteredIdSet.has(id)))
+    },
+    [filteredIds]
+  )
+
+  const handleDelete = React.useCallback((item: VolumeAlertItem) => {
+    setDeleteDialog({
+      open: true,
+      mode: "single",
+      ids: [item.id],
+      description: `确定删除 ${item.tokenName} 的量能通知吗？`,
+    })
+  }, [])
+
+  const handleDeleteAll = React.useCallback(() => {
+    if (!rows.length) {
+      openFeedbackDialog("提示", "当前没有可删除的代币。")
+      return
+    }
+
+    setDeleteDialog({
+      open: true,
+      mode: "all",
+      ids: rows.map((row) => row.id),
+      description: `确定一键删除全部 ${rows.length} 个代币吗？`,
+    })
+  }, [openFeedbackDialog, rows])
+
+  const handleDeleteSelected = React.useCallback(() => {
+    if (!selectedIds.length) {
+      openFeedbackDialog("提示", "请先选择要删除的代币。")
+      return
+    }
+
+    setDeleteDialog({
+      open: true,
+      mode: "selected",
+      ids: selectedIds,
+      description: `确定删除已选中的 ${selectedIds.length} 个代币吗？`,
+    })
+  }, [openFeedbackDialog, selectedIds])
+
   const handleConfirmDelete = React.useCallback(async () => {
-    if (!deleteTarget || isDeleting) {
+    if (!deleteDialog.ids.length || isDeleting) {
       return
     }
 
     setIsDeleting(true)
     try {
-      const response = await fetch(`/api/volume-alert?id=${encodeURIComponent(deleteTarget.id)}`, {
+      const query =
+        deleteDialog.mode === "all"
+          ? "all=1"
+          : `ids=${encodeURIComponent(deleteDialog.ids.join(","))}`
+
+      const response = await fetch(`/api/volume-alert?${query}`, {
         method: "DELETE",
       })
-      const payload = (await response.json()) as ApiResponse<null>
+      const payload = (await response.json()) as ApiResponse<{ deletedCount?: number } | null>
 
       if (!response.ok || payload.code !== "0") {
         openFeedbackDialog("删除失败", payload.msg || "删除失败")
         return
       }
 
-      const nextRows = rows.filter((row) => row.id !== deleteTarget.id)
+      const deleteSet = new Set(deleteDialog.ids)
+      const nextRows = deleteDialog.mode === "all" ? [] : rows.filter((row) => !deleteSet.has(row.id))
       setRows(nextRows)
+      setSelectedIds((prev) => prev.filter((id) => !deleteSet.has(id)))
       setPageIndex((prev) => {
         const maxPageIndex = Math.max(0, Math.ceil(nextRows.length / PAGE_SIZE) - 1)
         return Math.min(prev, maxPageIndex)
       })
-      setDeleteTarget(null)
-      openFeedbackDialog("删除成功", "该量能通知已删除。")
+      setDeleteDialog((prev) => ({ ...prev, open: false, ids: [] }))
+      openFeedbackDialog("删除成功", `已删除 ${deleteDialog.ids.length} 条记录。`)
     } catch {
       openFeedbackDialog("删除失败", "删除失败，请稍后重试")
     } finally {
       setIsDeleting(false)
     }
-  }, [deleteTarget, isDeleting, openFeedbackDialog, rows])
+  }, [deleteDialog, isDeleting, openFeedbackDialog, rows])
 
   const handleTogglePause = React.useCallback(
     async (id: string) => {
@@ -534,7 +657,8 @@ export default function VolumeAlertPage() {
 
       const duplicated = rows.some((row) => toAddressKey(row.address) === toAddressKey(address))
       if (duplicated) {
-        setFormError("该地址已存在，请勿重复添加。")
+        setFormError("代币已存在")
+        openFeedbackDialog("新增失败", "代币已存在")
         return
       }
 
@@ -716,12 +840,28 @@ export default function VolumeAlertPage() {
             >
               {isTestingTelegram ? "发送中..." : "测试电报"}
             </Button>
+            <Button type="button" className="w-full sm:w-auto" variant="outline" onClick={() => handleDeleteSelected()}>
+              删除已选 ({selectedIds.length})
+            </Button>
+            <Button type="button" className="w-full sm:w-auto" variant="destructive" onClick={() => handleDeleteAll()}>
+              一键删除
+            </Button>
           </div>
         </div>
       </div>
 
       <div className="space-y-4 rounded-lg border bg-card p-4 md:p-6">
-        <h2 className="text-lg font-semibold tracking-tight">表格区</h2>
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <h2 className="text-lg font-semibold tracking-tight">表格区</h2>
+          <div className="w-full md:w-80">
+            <Input
+              value={addressFilter}
+              onChange={(event) => setAddressFilter(event.target.value)}
+              placeholder="按地址筛选"
+              autoComplete="off"
+            />
+          </div>
+        </div>
 
         <div className="md:hidden space-y-3">
           {!isLoaded ? (
@@ -730,7 +870,16 @@ export default function VolumeAlertPage() {
             pagedRows.map((row) => (
               <article key={row.id} className="rounded-md border p-3 space-y-3">
                 <div className="flex items-start justify-between gap-2">
-                  <p className="font-mono text-xs break-all">{row.address}</p>
+                  <div className="flex items-start gap-2">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 size-4"
+                      checked={selectedIdSet.has(row.id)}
+                      onChange={(event) => toggleSelectItem(row.id, event.target.checked)}
+                      aria-label={`选择 ${row.address}`}
+                    />
+                    <p className="font-mono text-xs break-all">{row.address}</p>
+                  </div>
                   <Button
                     type="button"
                     variant="ghost"
@@ -779,7 +928,9 @@ export default function VolumeAlertPage() {
               </article>
             ))
           ) : (
-            <div className="rounded-md border p-4 text-center text-sm text-muted-foreground">暂无数据</div>
+            <div className="rounded-md border p-4 text-center text-sm text-muted-foreground">
+              {filteredRows.length ? "当前页暂无数据" : "暂无数据"}
+            </div>
           )}
         </div>
 
@@ -787,6 +938,15 @@ export default function VolumeAlertPage() {
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-10">
+                  <input
+                    type="checkbox"
+                    className="size-4"
+                    checked={isAllFilteredSelected}
+                    onChange={(event) => toggleSelectAllFiltered(event.target.checked)}
+                    aria-label="全选当前筛选结果"
+                  />
+                </TableHead>
                 <TableHead className="whitespace-nowrap">地址</TableHead>
                 <TableHead className="whitespace-nowrap">时间周期</TableHead>
                 <TableHead className="whitespace-nowrap">最新信息</TableHead>
@@ -797,13 +957,22 @@ export default function VolumeAlertPage() {
             <TableBody>
               {!isLoaded ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
+                  <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
                     加载中...
                   </TableCell>
                 </TableRow>
               ) : pagedRows.length ? (
                 pagedRows.map((row) => (
                   <TableRow key={row.id}>
+                    <TableCell>
+                      <input
+                        type="checkbox"
+                        className="size-4"
+                        checked={selectedIdSet.has(row.id)}
+                        onChange={(event) => toggleSelectItem(row.id, event.target.checked)}
+                        aria-label={`选择 ${row.address}`}
+                      />
+                    </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
                         <span className="max-w-72 truncate font-mono text-xs" title={`${row.chainLabel}: ${row.address}`}>
@@ -878,8 +1047,8 @@ export default function VolumeAlertPage() {
                 ))
               ) : (
                 <TableRow>
-                  <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
-                    暂无数据
+                  <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
+                    {filteredRows.length ? "当前页暂无数据" : "暂无数据"}
                   </TableCell>
                 </TableRow>
               )}
@@ -954,6 +1123,17 @@ export default function VolumeAlertPage() {
                 placeholder="请输入代币地址"
                 autoComplete="off"
               />
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onClick={handleSecurityCheck}
+                  disabled={!formState.address.trim()}
+                >
+                  安全检测
+                </Button>
+              </div>
             </div>
 
             <div className="space-y-2">
@@ -1083,16 +1263,32 @@ export default function VolumeAlertPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={deleteTarget !== null} onOpenChange={(open) => (!open ? setDeleteTarget(null) : null)}>
+      <Dialog
+        open={deleteDialog.open}
+        onOpenChange={(open) =>
+          setDeleteDialog((prev) => ({
+            ...prev,
+            open,
+          }))
+        }
+      >
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>删除确认</DialogTitle>
-            <DialogDescription>
-              {deleteTarget ? `确定删除 ${deleteTarget.tokenName} 的量能通知吗？` : "确定删除该量能通知吗？"}
-            </DialogDescription>
+            <DialogDescription>{deleteDialog.description || "确定执行删除操作吗？"}</DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setDeleteTarget(null)} disabled={isDeleting}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() =>
+                setDeleteDialog((prev) => ({
+                  ...prev,
+                  open: false,
+                }))
+              }
+              disabled={isDeleting}
+            >
               取消
             </Button>
             <Button type="button" variant="destructive" onClick={() => void handleConfirmDelete()} disabled={isDeleting}>

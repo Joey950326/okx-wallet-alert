@@ -23,6 +23,7 @@ type SendVolumeSignalTelegramInput = {
   signal: "UP" | "DOWN"
   address: string
   chain: string
+  period: string
   ratio: number | null
 }
 
@@ -170,11 +171,12 @@ export async function sendTelegramVolumeSignalMessage(
   input: SendVolumeSignalTelegramInput
 ): Promise<{ messageId?: number }> {
   const signalLabel = input.signal === "UP" ? "增量上涨" : "增量下跌"
+  const signalIcon = input.signal === "UP" ? "📈" : "📉"
   const ratioText = input.ratio && Number.isFinite(input.ratio) ? `${input.ratio.toFixed(2)}x` : "--"
   const detailUrl = `https://web3.okx.com/zh-hans/token/${encodeURIComponent(input.chain)}/${encodeURIComponent(input.address)}`
 
   return sendTelegramMessage({
-    text: `信号：${signalLabel}\n代币地址：${input.address}\n动量对比：${ratioText}`,
+    text: `🚨 量能信号提醒\n${signalIcon} 信号：${signalLabel}\n🪙 代币地址：${input.address}\n⏱️ 时间周期：${input.period}\n📊 动量对比：${ratioText}`,
     replyMarkup: {
       inline_keyboard: [[{ text: "查看详情", url: detailUrl }]],
     },

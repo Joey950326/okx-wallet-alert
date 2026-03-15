@@ -308,6 +308,7 @@ export async function PATCH(request: Request) {
             signal: momentum,
             address: updated.address,
             chain: updated.chainLabel,
+            period: updated.period,
             ratio: updated.momentumRatio,
           })
         } catch {
@@ -327,22 +328,40 @@ export async function PATCH(request: Request) {
 export async function DELETE(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
-    const id = (searchParams.get("id") ?? "").trim()
+    const items = await readItems()
+    const deleteAll = searchParams.get("all") === "1"
+    const idsParam = (searchParams.get("ids") ?? "").trim()
+    const singleId = (searchParams.get("id") ?? "").trim()
 
-    if (!id) {
-      return NextResponse.json({ code: "400", msg: "缺少 id", data: null }, { status: 400 })
+    if (deleteAll) {
+      await writeItems([])
+      return NextResponse.json({ code: "0", msg: "删除成功", data: { deletedCount: items.length } })
     }
 
-    const items = await readItems()
-    const nextItems = items.filter((item) => item.id !== id)
+    const ids = idsParam
+      ? idsParam
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean)
+      : singleId
+        ? [singleId]
+        : []
 
-    if (nextItems.length === items.length) {
+    if (!ids.length) {
+      return NextResponse.json({ code: "400", msg: "缺少删除参数", data: null }, { status: 400 })
+    }
+
+    const idSet = new Set(ids)
+    const nextItems = items.filter((item) => !idSet.has(item.id))
+    const deletedCount = items.length - nextItems.length
+
+    if (deletedCount <= 0) {
       return NextResponse.json({ code: "404", msg: "记录不存在", data: null }, { status: 404 })
     }
 
     await writeItems(nextItems)
 
-    return NextResponse.json({ code: "0", msg: "删除成功", data: null })
+    return NextResponse.json({ code: "0", msg: "删除成功", data: { deletedCount } })
   } catch {
     return NextResponse.json({ code: "500", msg: "删除失败", data: null }, { status: 500 })
   }

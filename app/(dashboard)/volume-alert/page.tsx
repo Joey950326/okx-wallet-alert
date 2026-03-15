@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { Copy, ExternalLink, Pencil } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -78,6 +79,15 @@ type FeedbackDialogState = {
   description: string
 }
 
+type EditPeriodDialogState = {
+  open: boolean
+  target: VolumeAlertItem | null
+  periodMode: string
+  customPeriod: string
+  error: string | null
+  isSubmitting: boolean
+}
+
 const PAGE_SIZE = 10
 const CUSTOM_PERIOD = "custom"
 const POLL_OFFSET_MS = 5 * 1000
@@ -113,6 +123,10 @@ function normalizeAddress(value: string) {
 
 function toAddressKey(value: string) {
   return value.trim().toLowerCase()
+}
+
+function buildTokenDetailUrl(chain: string, address: string) {
+  return `https://web3.okx.com/zh-hans/token/${encodeURIComponent(chain)}/${encodeURIComponent(address)}`
 }
 
 function toPeriodMs(period: string) {
@@ -267,10 +281,38 @@ export default function VolumeAlertPage() {
   })
   const [deleteTarget, setDeleteTarget] = React.useState<VolumeAlertItem | null>(null)
   const [isDeleting, setIsDeleting] = React.useState(false)
+  const [editDialog, setEditDialog] = React.useState<EditPeriodDialogState>({
+    open: false,
+    target: null,
+    periodMode: "15m",
+    customPeriod: "",
+    error: null,
+    isSubmitting: false,
+  })
   const requestQueueRef = React.useRef<Promise<void>>(Promise.resolve())
 
   const openFeedbackDialog = React.useCallback((title: string, description: string) => {
     setFeedbackDialog({ open: true, title, description })
+  }, [])
+
+  const handleCopyAddress = React.useCallback(
+    async (address: string) => {
+      try {
+        await navigator.clipboard.writeText(address)
+        openFeedbackDialog("复制成功", "地址已复制到剪贴板。")
+      } catch {
+        openFeedbackDialog("复制失败", "复制失败，请稍后重试。")
+      }
+    },
+    [openFeedbackDialog]
+  )
+
+  const handleJumpToDetail = React.useCallback((chain: string, address: string) => {
+    const targetUrl = buildTokenDetailUrl(chain, address)
+    const newTab = window.open(targetUrl, "_blank")
+    if (!newTab) {
+      window.location.assign(targetUrl)
+    }
   }, [])
 
   const fetchRows = React.useCallback(async () => {
@@ -381,6 +423,64 @@ export default function VolumeAlertPage() {
     },
     [openFeedbackDialog]
   )
+
+  const openEditDialog = React.useCallback((item: VolumeAlertItem) => {
+    const matched = PERIOD_OPTIONS.find((option) => option.value === item.period)
+    setEditDialog({
+      open: true,
+      target: item,
+      periodMode: matched ? matched.value : CUSTOM_PERIOD,
+      customPeriod: matched ? "" : item.period,
+      error: null,
+      isSubmitting: false,
+    })
+  }, [])
+
+  const handleEditDialogOpenChange = React.useCallback((open: boolean) => {
+    setEditDialog((prev) => ({
+      ...prev,
+      open,
+      error: open ? prev.error : null,
+    }))
+  }, [])
+
+  const handleEditPeriodSubmit = React.useCallback(async () => {
+    if (!editDialog.target || editDialog.isSubmitting) {
+      return
+    }
+
+    const nextPeriod =
+      editDialog.periodMode === CUSTOM_PERIOD ? editDialog.customPeriod.trim() : editDialog.periodMode
+    if (!nextPeriod) {
+      setEditDialog((prev) => ({ ...prev, error: "请选择或输入时间周期。" }))
+      return
+    }
+
+    setEditDialog((prev) => ({ ...prev, isSubmitting: true, error: null }))
+    try {
+      const response = await fetch("/api/volume-alert", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: editDialog.target.id,
+          action: "updatePeriod",
+          period: nextPeriod,
+        }),
+      })
+
+      const payload = (await response.json()) as ApiResponse<VolumeAlertItem>
+      if (!response.ok || payload.code !== "0" || !payload.data) {
+        setEditDialog((prev) => ({ ...prev, isSubmitting: false, error: payload.msg || "更新失败" }))
+        return
+      }
+
+      setRows((prev) => prev.map((row) => (row.id === payload.data.id ? payload.data : row)))
+      setEditDialog((prev) => ({ ...prev, open: false, isSubmitting: false, error: null }))
+      openFeedbackDialog("更新成功", "时间周期已更新。")
+    } catch {
+      setEditDialog((prev) => ({ ...prev, isSubmitting: false, error: "更新失败，请稍后重试" }))
+    }
+  }, [editDialog, openFeedbackDialog])
 
   const handleTestTelegram = React.useCallback(async () => {
     if (isTestingTelegram) {
@@ -603,12 +703,18 @@ export default function VolumeAlertPage() {
       <div className="rounded-lg border bg-card p-4 md:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-lg font-semibold tracking-tight">功能区</h2>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button type="button" variant="outline" onClick={() => void handleTestTelegram()} disabled={isTestingTelegram}>
-              {isTestingTelegram ? "发送中..." : "测试电报"}
-            </Button>
-            <Button type="button" onClick={() => setDialogOpen(true)}>
+          <div className="grid w-full grid-cols-1 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center">
+            <Button type="button" className="w-full sm:w-auto" onClick={() => setDialogOpen(true)}>
               增加
+            </Button>
+            <Button
+              type="button"
+              className="w-full sm:w-auto"
+              variant="outline"
+              onClick={() => void handleTestTelegram()}
+              disabled={isTestingTelegram}
+            >
+              {isTestingTelegram ? "发送中..." : "测试电报"}
             </Button>
           </div>
         </div>
@@ -617,75 +723,169 @@ export default function VolumeAlertPage() {
       <div className="space-y-4 rounded-lg border bg-card p-4 md:p-6">
         <h2 className="text-lg font-semibold tracking-tight">表格区</h2>
 
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="whitespace-nowrap">代币名称</TableHead>
-              <TableHead className="whitespace-nowrap">时间周期</TableHead>
-              <TableHead className="whitespace-nowrap">最新信息</TableHead>
-              <TableHead className="whitespace-nowrap">状态</TableHead>
-              <TableHead className="whitespace-nowrap">操作</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {!isLoaded ? (
+        <div className="md:hidden space-y-3">
+          {!isLoaded ? (
+            <div className="rounded-md border p-4 text-center text-sm text-muted-foreground">加载中...</div>
+          ) : pagedRows.length ? (
+            pagedRows.map((row) => (
+              <article key={row.id} className="rounded-md border p-3 space-y-3">
+                <div className="flex items-start justify-between gap-2">
+                  <p className="font-mono text-xs break-all">{row.address}</p>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    onClick={() => void handleCopyAddress(row.address)}
+                    aria-label="复制地址"
+                    title="复制地址"
+                  >
+                    <Copy />
+                  </Button>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <p className="text-muted-foreground">周期</p>
+                  <p className="text-right">{row.period}</p>
+                  <p className="text-muted-foreground">状态</p>
+                  <p className="text-right">{row.status === "ONLINE" ? "在线" : "暂停"}</p>
+                </div>
+                <div className="text-xs space-y-1">
+                  <p>{row.momentumText}</p>
+                  {typeof row.momentumRatio === "number" ? (
+                    <p className="text-muted-foreground">动量对比: {row.momentumRatio.toFixed(2)}x</p>
+                  ) : null}
+                  {row.lastCheckedAt ? (
+                    <p className="text-muted-foreground">{new Date(row.lastCheckedAt).toLocaleString()}</p>
+                  ) : null}
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button type="button" size="xs" variant="outline" onClick={() => openEditDialog(row)}>
+                    <Pencil />编辑
+                  </Button>
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    onClick={() => handleJumpToDetail(row.chainLabel, row.address)}
+                  >
+                    <ExternalLink />跳转
+                  </Button>
+                  <Button type="button" size="xs" variant="outline" onClick={() => void handleTogglePause(row.id)}>
+                    {row.status === "ONLINE" ? "暂停" : "恢复"}
+                  </Button>
+                  <Button type="button" size="xs" variant="destructive" onClick={() => handleDelete(row)}>
+                    删除
+                  </Button>
+                </div>
+              </article>
+            ))
+          ) : (
+            <div className="rounded-md border p-4 text-center text-sm text-muted-foreground">暂无数据</div>
+          )}
+        </div>
+
+        <div className="hidden md:block">
+          <Table>
+            <TableHeader>
               <TableRow>
-                <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
-                  加载中...
-                </TableCell>
+                <TableHead className="whitespace-nowrap">地址</TableHead>
+                <TableHead className="whitespace-nowrap">时间周期</TableHead>
+                <TableHead className="whitespace-nowrap">最新信息</TableHead>
+                <TableHead className="whitespace-nowrap">状态</TableHead>
+                <TableHead className="whitespace-nowrap">操作</TableHead>
               </TableRow>
-            ) : pagedRows.length ? (
-              pagedRows.map((row) => (
-                <TableRow key={row.id}>
-                  <TableCell className="whitespace-nowrap" title={`${row.chainLabel}: ${row.address}`}>
-                    {row.tokenName}
-                  </TableCell>
-                  <TableCell className="whitespace-nowrap">{row.period}</TableCell>
-                  <TableCell>
-                    <div className="flex flex-col">
-                      <span>{row.momentumText}</span>
-                      {typeof row.momentumRatio === "number" ? (
-                        <span className="text-xs text-muted-foreground">动量对比: {row.momentumRatio.toFixed(2)}x</span>
-                      ) : null}
-                      {row.lastCheckedAt ? (
-                        <span className="text-xs text-muted-foreground">
-                          {new Date(row.lastCheckedAt).toLocaleString()}
-                        </span>
-                      ) : null}
-                    </div>
-                  </TableCell>
-                  <TableCell className="whitespace-nowrap">{row.status === "ONLINE" ? "在线" : "暂停"}</TableCell>
-                  <TableCell>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Button
-                        type="button"
-                        size="xs"
-                        variant="destructive"
-                        onClick={() => handleDelete(row)}
-                      >
-                        删除
-                      </Button>
-                      <Button
-                        type="button"
-                        size="xs"
-                        variant="outline"
-                        onClick={() => void handleTogglePause(row.id)}
-                      >
-                        {row.status === "ONLINE" ? "暂停" : "恢复"}
-                      </Button>
-                    </div>
+            </TableHeader>
+            <TableBody>
+              {!isLoaded ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
+                    加载中...
                   </TableCell>
                 </TableRow>
-              ))
-            ) : (
-              <TableRow>
-                <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
-                  暂无数据
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
+              ) : pagedRows.length ? (
+                pagedRows.map((row) => (
+                  <TableRow key={row.id}>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <span className="max-w-72 truncate font-mono text-xs" title={`${row.chainLabel}: ${row.address}`}>
+                          {row.address}
+                        </span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-xs"
+                          onClick={() => void handleCopyAddress(row.address)}
+                          aria-label="复制地址"
+                          title="复制地址"
+                        >
+                          <Copy />
+                        </Button>
+                      </div>
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap">{row.period}</TableCell>
+                    <TableCell>
+                      <div className="flex flex-col">
+                        <span>{row.momentumText}</span>
+                        {typeof row.momentumRatio === "number" ? (
+                          <span className="text-xs text-muted-foreground">动量对比: {row.momentumRatio.toFixed(2)}x</span>
+                        ) : null}
+                        {row.lastCheckedAt ? (
+                          <span className="text-xs text-muted-foreground">
+                            {new Date(row.lastCheckedAt).toLocaleString()}
+                          </span>
+                        ) : null}
+                      </div>
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap">{row.status === "ONLINE" ? "在线" : "暂停"}</TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="destructive"
+                          onClick={() => handleDelete(row)}
+                        >
+                          删除
+                        </Button>
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="outline"
+                          onClick={() => openEditDialog(row)}
+                        >
+                          <Pencil />
+                          编辑
+                        </Button>
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="outline"
+                          onClick={() => handleJumpToDetail(row.chainLabel, row.address)}
+                        >
+                          <ExternalLink />
+                          跳转
+                        </Button>
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="outline"
+                          onClick={() => void handleTogglePause(row.id)}
+                        >
+                          {row.status === "ONLINE" ? "暂停" : "恢复"}
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))
+              ) : (
+                <TableRow>
+                  <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
+                    暂无数据
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
           <p className="text-sm text-muted-foreground">
@@ -804,6 +1004,82 @@ export default function VolumeAlertPage() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={editDialog.open} onOpenChange={handleEditDialogOpenChange}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>编辑时间周期</DialogTitle>
+            <DialogDescription>
+              {editDialog.target ? `修改 ${editDialog.target.address} 的时间周期。` : "修改时间周期。"}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="mt-2 flex flex-col gap-4">
+            <div className="space-y-2">
+              <label htmlFor="edit-volume-period-mode" className="text-sm font-medium">
+                时间周期
+              </label>
+              <div className="grid gap-2 md:grid-cols-[1fr_1fr]">
+                <Select
+                  value={editDialog.periodMode}
+                  onValueChange={(value) =>
+                    setEditDialog((prev) => ({
+                      ...prev,
+                      periodMode: value,
+                      error: null,
+                    }))
+                  }
+                >
+                  <SelectTrigger id="edit-volume-period-mode">
+                    <SelectValue placeholder="请选择时间周期" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PERIOD_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                    <SelectItem value={CUSTOM_PERIOD}>自定义</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                {editDialog.periodMode === CUSTOM_PERIOD ? (
+                  <Input
+                    id="edit-volume-custom-period"
+                    value={editDialog.customPeriod}
+                    onChange={(event) =>
+                      setEditDialog((prev) => ({
+                        ...prev,
+                        customPeriod: event.target.value,
+                        error: null,
+                      }))
+                    }
+                    placeholder="输入自定义周期，如 2H"
+                  />
+                ) : (
+                  <Input value={editDialog.periodMode} disabled readOnly aria-label="已选时间周期" />
+                )}
+              </div>
+            </div>
+
+            {editDialog.error ? <p className="text-sm text-destructive">{editDialog.error}</p> : null}
+
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => handleEditDialogOpenChange(false)}
+                disabled={editDialog.isSubmitting}
+              >
+                取消
+              </Button>
+              <Button type="button" onClick={() => void handleEditPeriodSubmit()} disabled={editDialog.isSubmitting}>
+                {editDialog.isSubmitting ? "保存中..." : "保存"}
+              </Button>
+            </DialogFooter>
+          </div>
         </DialogContent>
       </Dialog>
 

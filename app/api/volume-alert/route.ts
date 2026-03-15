@@ -40,6 +40,11 @@ type PatchPayload =
       id?: string
     }
   | {
+      action?: "updatePeriod"
+      id?: string
+      period?: string
+    }
+  | {
       action?: "updateMomentum"
       id?: string
       momentum?: VolumeMomentum
@@ -248,6 +253,26 @@ export async function PATCH(request: Request) {
         ...current,
         status: current.status === "ONLINE" ? "PAUSED" : "ONLINE",
       }
+      items[index] = updated
+      await writeItems(items)
+      return NextResponse.json({ code: "0", msg: "success", data: updated })
+    }
+
+    if (payload.action === "updatePeriod") {
+      const period = payload.period?.trim() ?? ""
+      if (!period) {
+        return NextResponse.json({ code: "400", msg: "时间周期不能为空", data: null }, { status: 400 })
+      }
+
+      const updated: VolumeAlertItem = {
+        ...current,
+        period,
+        momentum: "NONE",
+        momentumText: "待检测",
+        momentumRatio: null,
+        lastCheckedAt: null,
+      }
+
       items[index] = updated
       await writeItems(items)
       return NextResponse.json({ code: "0", msg: "success", data: updated })

@@ -102,6 +102,8 @@ const PAGE_SIZE = 10
 const CUSTOM_PERIOD = "custom"
 const POLL_OFFSET_MS = 10 * 1000
 const REQUEST_GAP_MS = 1500
+const GLOBAL_TICK_MS = 15 * 60 * 1000
+const MAX_TOKEN_COUNT = 100
 
 const CHAIN_OPTIONS: ChainOption[] = [
   { label: "solana", value: "501" },
@@ -111,8 +113,6 @@ const CHAIN_OPTIONS: ChainOption[] = [
 ]
 
 const PERIOD_OPTIONS: PeriodOption[] = [
-  { label: "1m", value: "1m" },
-  { label: "5m", value: "5m" },
   { label: "15m", value: "15m" },
   { label: "1h", value: "1H" },
   { label: "4h", value: "4H" },
@@ -316,7 +316,9 @@ export default function VolumeAlertPage() {
     error: null,
     isSubmitting: false,
   })
-  const requestQueueRef = React.useRef<Promise<void>>(Promise.resolve())
+  const rowsRef = React.useRef<VolumeAlertItem[]>([])
+  const isCycleRunningRef = React.useRef(false)
+  const rerunRequestedRef = React.useRef(false)
 
   const openFeedbackDialog = React.useCallback((title: string, description: string) => {
     setFeedbackDialog({ open: true, title, description })
@@ -384,6 +386,10 @@ export default function VolumeAlertPage() {
   React.useEffect(() => {
     void fetchRows()
   }, [fetchRows])
+
+  React.useEffect(() => {
+    rowsRef.current = rows
+  }, [rows])
 
   const resetForm = React.useCallback(() => {
     setFormState(INITIAL_FORM_STATE)
@@ -667,6 +673,12 @@ export default function VolumeAlertPage() {
         return
       }
 
+      if (rows.length >= MAX_TOKEN_COUNT) {
+        setFormError(`最多只支持添加 ${MAX_TOKEN_COUNT} 个代币。`)
+        openFeedbackDialog("新增失败", `最多只支持添加 ${MAX_TOKEN_COUNT} 个代币。`)
+        return
+      }
+
       setIsSubmitting(true)
       try {
         const candlesPayload = await fetchCandles({
@@ -722,69 +734,26 @@ export default function VolumeAlertPage() {
     [rows]
   )
 
-  React.useEffect(() => {
-    if (!rows.length) {
-      return
-    }
+  const runCheck = React.useCallback(async (row: VolumeAlertItem) => {
+    try {
+      const payload = await fetchCandles({
+        chainIndex: row.chainIndex,
+        address: row.address,
+        period: row.period,
+        limit: "5",
+      })
 
-    const onlineRows = rows.filter((row) => row.status === "ONLINE")
-    if (!onlineRows.length) {
-      return
-    }
-
-    const timers: Array<ReturnType<typeof setInterval>> = []
-    const starters: Array<ReturnType<typeof setTimeout>> = []
-
-    const runCheck = async (row: VolumeAlertItem) => {
-      try {
-        const payload = await fetchCandles({
-          chainIndex: row.chainIndex,
-          address: row.address,
-          period: row.period,
-          limit: "5",
-        })
-
-        const now = new Date().toISOString()
-        if (payload.code !== "0" || !Array.isArray(payload.data) || payload.data.length === 0) {
-          const response = await fetch("/api/volume-alert", {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              id: row.id,
-              action: "updateMomentum",
-              momentum: "ERROR",
-              momentumText: "检测失败",
-              momentumRatio: null,
-              lastCheckedAt: now,
-            }),
-          })
-
-          const patchPayload = (await response.json()) as ApiResponse<VolumeAlertItem>
-          if (response.ok && patchPayload.code === "0" && patchPayload.data) {
-            setRows((prev) => prev.map((item) => (item.id === row.id ? patchPayload.data : item)))
-          }
-          return
-        }
-
-        const momentumResult = analyzeMomentum(payload.data)
-        const normalizedMomentumResult =
-          !row.monitorDown && momentumResult.momentum === "DOWN"
-            ? {
-                ...momentumResult,
-                momentum: "NONE" as const,
-                momentumText: "无明显动量",
-              }
-            : momentumResult
-
+      const now = new Date().toISOString()
+      if (payload.code !== "0" || !Array.isArray(payload.data) || payload.data.length === 0) {
         const response = await fetch("/api/volume-alert", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             id: row.id,
             action: "updateMomentum",
-            momentum: normalizedMomentumResult.momentum,
-            momentumText: normalizedMomentumResult.momentumText,
-            momentumRatio: normalizedMomentumResult.momentumRatio,
+            momentum: "ERROR",
+            momentumText: "检测失败",
+            momentumRatio: null,
             lastCheckedAt: now,
           }),
         })
@@ -793,42 +762,97 @@ export default function VolumeAlertPage() {
         if (response.ok && patchPayload.code === "0" && patchPayload.data) {
           setRows((prev) => prev.map((item) => (item.id === row.id ? patchPayload.data : item)))
         }
-      } catch {
-        // Keep scheduler alive even if one polling task fails.
+        return
+      }
+
+      const momentumResult = analyzeMomentum(payload.data)
+      const normalizedMomentumResult =
+        !row.monitorDown && momentumResult.momentum === "DOWN"
+          ? {
+              ...momentumResult,
+              momentum: "NONE" as const,
+              momentumText: "无明显动量",
+            }
+          : momentumResult
+
+      const response = await fetch("/api/volume-alert", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: row.id,
+          action: "updateMomentum",
+          momentum: normalizedMomentumResult.momentum,
+          momentumText: normalizedMomentumResult.momentumText,
+          momentumRatio: normalizedMomentumResult.momentumRatio,
+          lastCheckedAt: now,
+        }),
+      })
+
+      const patchPayload = (await response.json()) as ApiResponse<VolumeAlertItem>
+      if (response.ok && patchPayload.code === "0" && patchPayload.data) {
+        setRows((prev) => prev.map((item) => (item.id === row.id ? patchPayload.data : item)))
+      }
+    } catch {
+      // Keep scheduler alive even if one polling task fails.
+    }
+  }, [])
+
+  React.useEffect(() => {
+    if (!rows.length) {
+      return
+    }
+
+    const runCycle = async () => {
+      if (isCycleRunningRef.current) {
+        rerunRequestedRef.current = true
+        return
+      }
+
+      isCycleRunningRef.current = true
+      try {
+        const nowMs = Date.now()
+        const onlineRows = rowsRef.current.filter((row) => row.status === "ONLINE")
+
+        for (const row of onlineRows) {
+          const intervalMs = toPeriodMs(row.period)
+          const lastCheckedMs = row.lastCheckedAt ? new Date(row.lastCheckedAt).getTime() : 0
+          const shouldRun = !lastCheckedMs || nowMs - lastCheckedMs >= intervalMs
+          if (!shouldRun) {
+            continue
+          }
+
+          await runCheck(row)
+          await sleep(REQUEST_GAP_MS)
+        }
+      } finally {
+        isCycleRunningRef.current = false
+
+        // If a cycle was requested during execution, run one more pass immediately.
+        if (rerunRequestedRef.current) {
+          rerunRequestedRef.current = false
+          void runCycle()
+        }
       }
     }
 
-    onlineRows.forEach((row) => {
-      const intervalMs = toPeriodMs(row.period)
-      const waitMs = getDelayToNextBoundaryWithOffset(intervalMs, POLL_OFFSET_MS)
+    const waitMs = getDelayToNextBoundaryWithOffset(GLOBAL_TICK_MS, POLL_OFFSET_MS)
+    const starter = setTimeout(() => {
+      void runCycle()
+      const timer = setInterval(() => {
+        void runCycle()
+      }, GLOBAL_TICK_MS)
+      intervalRef.current = timer
+    }, waitMs)
 
-      const enqueueCheck = () => {
-        requestQueueRef.current = requestQueueRef.current
-          .then(async () => {
-            await runCheck(row)
-            await sleep(REQUEST_GAP_MS)
-          })
-          .catch(() => {
-            // Keep queue chain usable even if one task fails.
-          })
-      }
-
-      const starter = setTimeout(() => {
-        enqueueCheck()
-        const timer = setInterval(() => {
-          enqueueCheck()
-        }, intervalMs)
-        timers.push(timer)
-      }, waitMs)
-
-      starters.push(starter)
-    })
+    const intervalRef: { current: ReturnType<typeof setInterval> | null } = { current: null }
 
     return () => {
-      starters.forEach((starter) => clearTimeout(starter))
-      timers.forEach((timer) => clearInterval(timer))
+      clearTimeout(starter)
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+      }
     }
-  }, [scheduleSignature])
+  }, [runCheck, scheduleSignature, rows.length])
 
   return (
     <section className="space-y-6">
@@ -841,7 +865,12 @@ export default function VolumeAlertPage() {
 
       <div className="rounded-lg border bg-card p-4 md:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-lg font-semibold tracking-tight">功能区</h2>
+          <div className="space-y-1">
+            <h2 className="text-lg font-semibold tracking-tight">功能区</h2>
+            <p className={`text-xs ${rows.length >= MAX_TOKEN_COUNT ? "text-destructive" : "text-muted-foreground"}`}>
+              已添加 {rows.length}/{MAX_TOKEN_COUNT}
+            </p>
+          </div>
           <div className="grid w-full grid-cols-1 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center">
             <Button type="button" className="w-full sm:w-auto" onClick={() => setDialogOpen(true)}>
               增加

@@ -56,6 +56,7 @@ type PatchPayload =
     }
 
 const DATA_FILE_PATH = path.join(process.cwd(), "logs", "volume-alert-items.json")
+const MAX_TOKEN_COUNT = 100
 
 function normalizeAddress(value: string) {
   return value.trim()
@@ -208,6 +209,13 @@ export async function POST(request: Request) {
     }
 
     const items = await readItems()
+    if (items.length >= MAX_TOKEN_COUNT) {
+      return NextResponse.json(
+        { code: "400", msg: `最多只支持添加 ${MAX_TOKEN_COUNT} 个代币`, data: null },
+        { status: 400 }
+      )
+    }
+
     const duplicated = items.some((item) => toAddressKey(item.address) === toAddressKey(address))
     if (duplicated) {
       return NextResponse.json({ code: "409", msg: "地址已存在", data: null }, { status: 409 })

@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Switch } from "@/components/ui/switch"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 
 type ChainOption = {
@@ -37,6 +38,7 @@ type VolumeAlertItem = {
   address: string
   tokenName: string
   period: string
+  monitorDown: boolean
   status: VolumeAlertStatus
   momentum: VolumeMomentum
   momentumText: string
@@ -71,6 +73,7 @@ type CreateFormState = {
   address: string
   periodMode: string
   customPeriod: string
+  monitorDown: boolean
 }
 
 type FeedbackDialogState = {
@@ -97,7 +100,7 @@ type EditPeriodDialogState = {
 
 const PAGE_SIZE = 10
 const CUSTOM_PERIOD = "custom"
-const POLL_OFFSET_MS = 5 * 1000
+const POLL_OFFSET_MS = 10 * 1000
 const REQUEST_GAP_MS = 1500
 
 const CHAIN_OPTIONS: ChainOption[] = [
@@ -122,6 +125,7 @@ const INITIAL_FORM_STATE: CreateFormState = {
   address: "",
   periodMode: "15m",
   customPeriod: "",
+  monitorDown: false,
 }
 
 function normalizeAddress(value: string) {
@@ -189,11 +193,12 @@ function analyzeMomentum(candles: CandleItem[]): {
     }
   }
 
-  const sorted = [...candles].sort((a, b) => Number(a.ts) - Number(b.ts))
-  // Compare second latest closed candle with third latest one.
-  // The latest candle can still be open and should not be used.
-  const prev = sorted[sorted.length - 3]
-  const current = sorted[sorted.length - 2]
+  // Sort by timestamp desc: newest candle comes first.
+  const sorted = [...candles].sort((a, b) => Number(b.ts) - Number(a.ts))
+  // Use the 2nd and 3rd candles for comparison.
+  // The 1st candle may still be open and is skipped.
+  const current = sorted[1]
+  const prev = sorted[2]
 
   const prevVol = Number(prev.vol)
   const currentVol = Number(current.vol)
@@ -686,6 +691,7 @@ export default function VolumeAlertPage() {
             chainLabel: selectedChain?.label ?? "unknown",
             address,
             period: resolvedPeriod,
+            monitorDown: formState.monitorDown,
           }),
         })
         const payload = (await response.json()) as ApiResponse<VolumeAlertItem>
@@ -761,15 +767,24 @@ export default function VolumeAlertPage() {
         }
 
         const momentumResult = analyzeMomentum(payload.data)
+        const normalizedMomentumResult =
+          !row.monitorDown && momentumResult.momentum === "DOWN"
+            ? {
+                ...momentumResult,
+                momentum: "NONE" as const,
+                momentumText: "无明显动量",
+              }
+            : momentumResult
+
         const response = await fetch("/api/volume-alert", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             id: row.id,
             action: "updateMomentum",
-            momentum: momentumResult.momentum,
-            momentumText: momentumResult.momentumText,
-            momentumRatio: momentumResult.momentumRatio,
+            momentum: normalizedMomentumResult.momentum,
+            momentumText: normalizedMomentumResult.momentumText,
+            momentumRatio: normalizedMomentumResult.momentumRatio,
             lastCheckedAt: now,
           }),
         })
@@ -1171,6 +1186,23 @@ export default function VolumeAlertPage() {
                   <Input value={formState.periodMode} disabled readOnly aria-label="已选时间周期" />
                 )}
               </div>
+            </div>
+
+            <div className="flex items-center justify-between rounded-md border p-3">
+              <div className="space-y-1">
+                <p className="text-sm font-medium">下跌动量监控</p>
+                <p className="text-xs text-muted-foreground">开启后会计算并通知“增量下跌”信号。</p>
+              </div>
+              <Switch
+                checked={formState.monitorDown}
+                onCheckedChange={(checked) =>
+                  setFormState((prev) => ({
+                    ...prev,
+                    monitorDown: checked,
+                  }))
+                }
+                aria-label="下跌动量监控"
+              />
             </div>
 
             {formError ? <p className="text-sm text-destructive">{formError}</p> : null}

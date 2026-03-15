@@ -19,6 +19,7 @@ type VolumeAlertItem = {
   address: string
   tokenName: string
   period: string
+  monitorDown: boolean
   status: VolumeAlertStatus
   momentum: VolumeMomentum
   momentumText: string
@@ -32,6 +33,7 @@ type CreatePayload = {
   chainLabel?: string
   address?: string
   period?: string
+  monitorDown?: boolean
 }
 
 type PatchPayload =
@@ -117,6 +119,7 @@ async function readItems(): Promise<VolumeAlertItem[]> {
           typeof candidate.address !== "string" ||
           typeof candidate.tokenName !== "string" ||
           typeof candidate.period !== "string" ||
+          (typeof candidate.monitorDown !== "boolean" && candidate.monitorDown !== undefined) ||
           (candidate.momentum !== "UP" &&
             candidate.momentum !== "DOWN" &&
             candidate.momentum !== "NONE" &&
@@ -136,6 +139,7 @@ async function readItems(): Promise<VolumeAlertItem[]> {
           address: candidate.address,
           tokenName: candidate.tokenName,
           period: candidate.period,
+          monitorDown: candidate.monitorDown === true,
           status: normalizedStatus,
           momentum: candidate.momentum,
           momentumText: candidate.momentumText,
@@ -162,6 +166,7 @@ async function readItems(): Promise<VolumeAlertItem[]> {
           typeof candidate.address === "string" &&
           typeof candidate.tokenName === "string" &&
           typeof candidate.period === "string" &&
+          typeof candidate.monitorDown === "boolean" &&
           (candidate.status === "ONLINE" || candidate.status === "PAUSED") &&
           (candidate.momentum === "UP" ||
             candidate.momentum === "DOWN" ||
@@ -196,6 +201,7 @@ export async function POST(request: Request) {
     const chainLabel = payload.chainLabel?.trim() ?? ""
     const address = normalizeAddress(payload.address ?? "")
     const period = payload.period?.trim() ?? ""
+    const monitorDown = payload.monitorDown === true
 
     if (!chainIndex || !chainLabel || !address || !period) {
       return NextResponse.json({ code: "400", msg: "缺少必要参数", data: null }, { status: 400 })
@@ -214,6 +220,7 @@ export async function POST(request: Request) {
       address,
       tokenName: toShortAddress(address),
       period,
+      monitorDown,
       status: "ONLINE",
       momentum: "NONE",
       momentumText: "待检测",
@@ -301,8 +308,10 @@ export async function PATCH(request: Request) {
       await writeItems(items)
 
       const isSignal = momentum === "UP" || momentum === "DOWN"
+      const shouldNotifyDown = updated.monitorDown
+      const allowNotifyByDirection = momentum === "UP" || (momentum === "DOWN" && shouldNotifyDown)
       const isNewSignal = current.momentum !== momentum
-      if (isSignal && isNewSignal) {
+      if (isSignal && allowNotifyByDirection && isNewSignal) {
         try {
           await sendTelegramVolumeSignalMessage({
             signal: momentum,

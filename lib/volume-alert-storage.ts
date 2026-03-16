@@ -22,6 +22,7 @@ export type VolumeAlertItem = {
 }
 
 export const DATA_FILE_PATH = path.join(process.cwd(), "logs", "volume-alert-items.json")
+const ACTIVITY_LOG_FILE_PATH = path.join(process.cwd(), "logs", "volume-alert-activity.log")
 
 export function normalizeAddress(value: string) {
   return value.trim()
@@ -48,6 +49,32 @@ async function ensureDataFile() {
   } catch {
     await fs.writeFile(DATA_FILE_PATH, "[]", "utf-8")
   }
+}
+
+async function ensureActivityLogFile() {
+  const directory = path.dirname(ACTIVITY_LOG_FILE_PATH)
+  await fs.mkdir(directory, { recursive: true })
+
+  try {
+    await fs.access(ACTIVITY_LOG_FILE_PATH)
+  } catch {
+    await fs.writeFile(ACTIVITY_LOG_FILE_PATH, "", "utf-8")
+  }
+}
+
+export async function appendVolumeAlertActivityLog(entry: {
+  action: "CREATE" | "UPDATE" | "DELETE"
+  itemId?: string
+  address?: string
+  detail?: string
+}) {
+  await ensureActivityLogFile()
+  const payload = {
+    at: new Date().toISOString(),
+    ...entry,
+  }
+
+  await fs.appendFile(ACTIVITY_LOG_FILE_PATH, `${JSON.stringify(payload)}\n`, "utf-8")
 }
 
 export async function readVolumeAlertItems(): Promise<VolumeAlertItem[]> {

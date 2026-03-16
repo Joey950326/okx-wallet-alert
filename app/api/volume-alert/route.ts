@@ -4,6 +4,7 @@ import { NextResponse } from "next/server"
 import { sendTelegramVolumeSignalMessage } from "@/lib/telegram-bot"
 import { startVolumeAlertScheduler } from "@/lib/volume-alert-scheduler"
 import {
+  appendVolumeAlertActivityLog,
   normalizeAddress,
   readVolumeAlertItems,
   toAddressKey,
@@ -29,9 +30,10 @@ type PatchPayload =
       id?: string
     }
   | {
-      action?: "updatePeriod"
+      action?: "updateConfig"
       id?: string
       period?: string
+      monitorDown?: boolean
     }
   | {
       action?: "updateMomentum"
@@ -97,6 +99,12 @@ export async function POST(request: Request) {
 
     const nextItems = [newItem, ...items]
     await writeVolumeAlertItems(nextItems)
+    await appendVolumeAlertActivityLog({
+      action: "CREATE",
+      itemId: newItem.id,
+      address: newItem.address,
+      detail: `period=${newItem.period}, monitorDown=${newItem.monitorDown}`,
+    })
 
     return NextResponse.json({ code: "0", msg: "添加成功", data: newItem })
   } catch {
@@ -128,18 +136,26 @@ export async function PATCH(request: Request) {
       }
       items[index] = updated
       await writeVolumeAlertItems(items)
+      await appendVolumeAlertActivityLog({
+        action: "UPDATE",
+        itemId: updated.id,
+        address: updated.address,
+        detail: `togglePause=>${updated.status}`,
+      })
       return NextResponse.json({ code: "0", msg: "success", data: updated })
     }
 
-    if (payload.action === "updatePeriod") {
+    if (payload.action === "updateConfig") {
       const period = payload.period?.trim() ?? ""
       if (!period) {
         return NextResponse.json({ code: "400", msg: "时间周期不能为空", data: null }, { status: 400 })
       }
+      const monitorDown = payload.monitorDown === true
 
       const updated: VolumeAlertItem = {
         ...current,
         period,
+        monitorDown,
         momentum: "NONE",
         momentumText: "待检测",
         momentumRatio: null,
@@ -148,6 +164,12 @@ export async function PATCH(request: Request) {
 
       items[index] = updated
       await writeVolumeAlertItems(items)
+      await appendVolumeAlertActivityLog({
+        action: "UPDATE",
+        itemId: updated.id,
+        address: updated.address,
+        detail: `updateConfig=>period=${updated.period}, monitorDown=${updated.monitorDown}`,
+      })
       return NextResponse.json({ code: "0", msg: "success", data: updated })
     }
 
@@ -210,6 +232,10 @@ export async function DELETE(request: Request) {
 
     if (deleteAll) {
       await writeVolumeAlertItems([])
+      await appendVolumeAlertActivityLog({
+        action: "DELETE",
+        detail: `deleteAll count=${items.length}`,
+      })
       return NextResponse.json({ code: "0", msg: "删除成功", data: { deletedCount: items.length } })
     }
 
@@ -235,6 +261,10 @@ export async function DELETE(request: Request) {
     }
 
     await writeVolumeAlertItems(nextItems)
+    await appendVolumeAlertActivityLog({
+      action: "DELETE",
+      detail: `deleteSelected count=${deletedCount}`,
+    })
 
     return NextResponse.json({ code: "0", msg: "删除成功", data: { deletedCount } })
   } catch {

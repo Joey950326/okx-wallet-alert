@@ -94,6 +94,7 @@ type EditPeriodDialogState = {
   target: VolumeAlertItem | null
   periodMode: string
   customPeriod: string
+  monitorDown: boolean
   error: string | null
   isSubmitting: boolean
 }
@@ -202,6 +203,7 @@ export default function VolumeAlertPage() {
     target: null,
     periodMode: "15m",
     customPeriod: "",
+    monitorDown: false,
     error: null,
     isSubmitting: false,
   })
@@ -458,6 +460,7 @@ export default function VolumeAlertPage() {
       target: item,
       periodMode: matched ? matched.value : CUSTOM_PERIOD,
       customPeriod: matched ? "" : item.period,
+      monitorDown: item.monitorDown,
       error: null,
       isSubmitting: false,
     })
@@ -490,8 +493,9 @@ export default function VolumeAlertPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           id: editDialog.target.id,
-          action: "updatePeriod",
+          action: "updateConfig",
           period: nextPeriod,
+          monitorDown: editDialog.monitorDown,
         }),
       })
 
@@ -1071,6 +1075,24 @@ export default function VolumeAlertPage() {
                   <Input value={editDialog.periodMode} disabled readOnly aria-label="已选时间周期" />
                 )}
               </div>
+            </div>
+
+            <div className="flex items-center justify-between rounded-md border p-3">
+              <div className="space-y-1">
+                <p className="text-sm font-medium">下跌动量监控</p>
+                <p className="text-xs text-muted-foreground">开启后会计算并通知“增量下跌”信号。</p>
+              </div>
+              <Switch
+                checked={editDialog.monitorDown}
+                onCheckedChange={(checked) =>
+                  setEditDialog((prev) => ({
+                    ...prev,
+                    monitorDown: checked,
+                    error: null,
+                  }))
+                }
+                aria-label="编辑下跌动量监控"
+              />
             </div>
 
             {editDialog.error ? <p className="text-sm text-destructive">{editDialog.error}</p> : null}

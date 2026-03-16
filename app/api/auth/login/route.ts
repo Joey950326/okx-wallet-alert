@@ -25,10 +25,14 @@ export async function POST(request: Request) {
 
     const token = await createSignedSessionToken(username)
     const response = NextResponse.json({ code: "0", msg: "登录成功", data: { username } })
+
+    const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim()
+    const isHttps = forwardedProto ? forwardedProto === "https" : new URL(request.url).protocol === "https:"
+
     response.cookies.set(AUTH_COOKIE_NAME, token, {
       httpOnly: true,
       sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
+      secure: isHttps,
       path: "/",
       maxAge: AUTH_MAX_AGE_SECONDS,
     })

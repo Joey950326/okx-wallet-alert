@@ -12,16 +12,22 @@ const nextConfig: NextConfig = {
         new WebpackObfuscator(
           {
             compact: true,
-            controlFlowFlattening: true,
-            deadCodeInjection: true,
+            controlFlowFlattening: false,
+            deadCodeInjection: false,
             stringArray: true,
-            stringArrayEncoding: ["base64"],
-            splitStrings: true,
-            splitStringsChunkLength: 8,
+            stringArrayEncoding: [],
+            splitStrings: false,
             simplify: true,
-            selfDefending: true,
+            selfDefending: false,
+            disableConsoleOutput: false,
+            transformObjectKeys: false,
           },
-          []
+          [
+            "**/webpack-*.js",
+            "**/framework-*.js",
+            "**/main-*.js",
+            "**/polyfills-*.js",
+          ]
         )
       );
     }

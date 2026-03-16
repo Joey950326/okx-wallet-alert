@@ -100,9 +100,6 @@ type EditPeriodDialogState = {
 
 const PAGE_SIZE = 10
 const CUSTOM_PERIOD = "custom"
-const POLL_OFFSET_MS = 10 * 1000
-const REQUEST_GAP_MS = 1500
-const GLOBAL_TICK_MS = 15 * 60 * 1000
 const MAX_TOKEN_COUNT = 100
 
 const CHAIN_OPTIONS: ChainOption[] = [
@@ -146,114 +143,6 @@ function buildSecuritySearchUrl(address: string) {
   url.searchParams.set("src", "typed_query")
   url.searchParams.set("f", "top")
   return url.toString()
-}
-
-function toPeriodMs(period: string) {
-  const normalized = period.trim()
-  const match = normalized.match(/^(\d+)\s*([a-zA-Z]+)$/)
-  if (!match) {
-    return 15 * 60 * 1000
-  }
-
-  const value = Number(match[1])
-  const unit = (match[2] ?? "").toLowerCase()
-  if (!Number.isFinite(value) || value <= 0) {
-    return 15 * 60 * 1000
-  }
-
-  if (unit === "s") {
-    return value * 1000
-  }
-  if (unit === "m") {
-    return value * 60 * 1000
-  }
-  if (unit === "h") {
-    return value * 60 * 60 * 1000
-  }
-  if (unit === "d") {
-    return value * 24 * 60 * 60 * 1000
-  }
-  if (unit === "w") {
-    return value * 7 * 24 * 60 * 60 * 1000
-  }
-
-  return 15 * 60 * 1000
-}
-
-function analyzeMomentum(candles: CandleItem[]): {
-  momentum: VolumeMomentum
-  momentumText: string
-  momentumRatio: number | null
-} {
-  if (!Array.isArray(candles) || candles.length < 3) {
-    return {
-      momentum: "NONE",
-      momentumText: "K线不足",
-      momentumRatio: null,
-    }
-  }
-
-  // Sort by timestamp desc: newest candle comes first.
-  const sorted = [...candles].sort((a, b) => Number(b.ts) - Number(a.ts))
-  // Use the 2nd and 3rd candles for comparison.
-  // The 1st candle may still be open and is skipped.
-  const current = sorted[1]
-  const prev = sorted[2]
-
-  const prevVol = Number(prev.vol)
-  const currentVol = Number(current.vol)
-  const currentOpen = Number(current.o)
-  const currentClose = Number(current.c)
-
-  if (!Number.isFinite(prevVol) || !Number.isFinite(currentVol) || !Number.isFinite(currentOpen) || !Number.isFinite(currentClose)) {
-    return {
-      momentum: "ERROR",
-      momentumText: "数据异常",
-      momentumRatio: null,
-    }
-  }
-
-  const ratio = prevVol > 0 ? currentVol / prevVol : null
-
-  if (currentVol >= prevVol * 3) {
-    if (currentClose > currentOpen) {
-      return {
-        momentum: "UP",
-        momentumText: "增量上涨",
-        momentumRatio: ratio,
-      }
-    }
-
-    if (currentOpen > currentClose) {
-      return {
-        momentum: "DOWN",
-        momentumText: "增量下跌",
-        momentumRatio: ratio,
-      }
-    }
-  }
-
-  return {
-    momentum: "NONE",
-    momentumText: "无明显动量",
-    momentumRatio: ratio,
-  }
-}
-
-function sleep(ms: number) {
-  return new Promise<void>((resolve) => {
-    setTimeout(resolve, ms)
-  })
-}
-
-function getDelayToNextBoundaryWithOffset(intervalMs: number, offsetMs: number, nowMs = Date.now()) {
-  const currentCycleStart = Math.floor(nowMs / intervalMs) * intervalMs
-  let nextRunAt = currentCycleStart + offsetMs
-  if (nextRunAt <= nowMs) {
-    nextRunAt += intervalMs
-  }
-
-  return Math.max(0, nextRunAt - nowMs)
 }
 
 async function fetchCandles(params: {
@@ -316,9 +205,6 @@ export default function VolumeAlertPage() {
     error: null,
     isSubmitting: false,
   })
-  const rowsRef = React.useRef<VolumeAlertItem[]>([])
-  const isCycleRunningRef = React.useRef(false)
-  const rerunRequestedRef = React.useRef(false)
 
   const openFeedbackDialog = React.useCallback((title: string, description: string) => {
     setFeedbackDialog({ open: true, title, description })
@@ -388,8 +274,15 @@ export default function VolumeAlertPage() {
   }, [fetchRows])
 
   React.useEffect(() => {
-    rowsRef.current = rows
-  }, [rows])
+    // UI polling only: refresh list from server state periodically.
+    const timer = setInterval(() => {
+      void fetchRows()
+    }, 30 * 1000)
+
+    return () => {
+      clearInterval(timer)
+    }
+  }, [fetchRows])
 
   const resetForm = React.useCallback(() => {
     setFormState(INITIAL_FORM_STATE)
@@ -728,131 +621,6 @@ export default function VolumeAlertPage() {
     },
     [formState, openFeedbackDialog, resetForm, resolvedPeriod, rows]
   )
-
-  const scheduleSignature = React.useMemo(
-    () => rows.map((row) => `${row.id}:${row.status}:${row.period}:${row.chainIndex}:${row.address}`).join("|"),
-    [rows]
-  )
-
-  const runCheck = React.useCallback(async (row: VolumeAlertItem) => {
-    try {
-      const payload = await fetchCandles({
-        chainIndex: row.chainIndex,
-        address: row.address,
-        period: row.period,
-        limit: "5",
-      })
-
-      const now = new Date().toISOString()
-      if (payload.code !== "0" || !Array.isArray(payload.data) || payload.data.length === 0) {
-        const response = await fetch("/api/volume-alert", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            id: row.id,
-            action: "updateMomentum",
-            momentum: "ERROR",
-            momentumText: "检测失败",
-            momentumRatio: null,
-            lastCheckedAt: now,
-          }),
-        })
-
-        const patchPayload = (await response.json()) as ApiResponse<VolumeAlertItem>
-        if (response.ok && patchPayload.code === "0" && patchPayload.data) {
-          setRows((prev) => prev.map((item) => (item.id === row.id ? patchPayload.data : item)))
-        }
-        return
-      }
-
-      const momentumResult = analyzeMomentum(payload.data)
-      const normalizedMomentumResult =
-        !row.monitorDown && momentumResult.momentum === "DOWN"
-          ? {
-              ...momentumResult,
-              momentum: "NONE" as const,
-              momentumText: "无明显动量",
-            }
-          : momentumResult
-
-      const response = await fetch("/api/volume-alert", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: row.id,
-          action: "updateMomentum",
-          momentum: normalizedMomentumResult.momentum,
-          momentumText: normalizedMomentumResult.momentumText,
-          momentumRatio: normalizedMomentumResult.momentumRatio,
-          lastCheckedAt: now,
-        }),
-      })
-
-      const patchPayload = (await response.json()) as ApiResponse<VolumeAlertItem>
-      if (response.ok && patchPayload.code === "0" && patchPayload.data) {
-        setRows((prev) => prev.map((item) => (item.id === row.id ? patchPayload.data : item)))
-      }
-    } catch {
-      // Keep scheduler alive even if one polling task fails.
-    }
-  }, [])
-
-  React.useEffect(() => {
-    if (!rows.length) {
-      return
-    }
-
-    const runCycle = async () => {
-      if (isCycleRunningRef.current) {
-        rerunRequestedRef.current = true
-        return
-      }
-
-      isCycleRunningRef.current = true
-      try {
-        const nowMs = Date.now()
-        const onlineRows = rowsRef.current.filter((row) => row.status === "ONLINE")
-
-        for (const row of onlineRows) {
-          const intervalMs = toPeriodMs(row.period)
-          const lastCheckedMs = row.lastCheckedAt ? new Date(row.lastCheckedAt).getTime() : 0
-          const shouldRun = !lastCheckedMs || nowMs - lastCheckedMs >= intervalMs
-          if (!shouldRun) {
-            continue
-          }
-
-          await runCheck(row)
-          await sleep(REQUEST_GAP_MS)
-        }
-      } finally {
-        isCycleRunningRef.current = false
-
-        // If a cycle was requested during execution, run one more pass immediately.
-        if (rerunRequestedRef.current) {
-          rerunRequestedRef.current = false
-          void runCycle()
-        }
-      }
-    }
-
-    const waitMs = getDelayToNextBoundaryWithOffset(GLOBAL_TICK_MS, POLL_OFFSET_MS)
-    const starter = setTimeout(() => {
-      void runCycle()
-      const timer = setInterval(() => {
-        void runCycle()
-      }, GLOBAL_TICK_MS)
-      intervalRef.current = timer
-    }, waitMs)
-
-    const intervalRef: { current: ReturnType<typeof setInterval> | null } = { current: null }
-
-    return () => {
-      clearTimeout(starter)
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current)
-      }
-    }
-  }, [runCheck, scheduleSignature, rows.length])
 
   return (
     <section className="space-y-6">

@@ -1,32 +1,19 @@
 import { randomUUID } from "node:crypto"
-import { promises as fs } from "node:fs"
-import path from "node:path"
-
 import { NextResponse } from "next/server"
 
 import { sendTelegramVolumeSignalMessage } from "@/lib/telegram-bot"
+import { startVolumeAlertScheduler } from "@/lib/volume-alert-scheduler"
+import {
+  normalizeAddress,
+  readVolumeAlertItems,
+  toAddressKey,
+  toShortAddress,
+  writeVolumeAlertItems,
+  type VolumeAlertItem,
+  type VolumeMomentum,
+} from "@/lib/volume-alert-storage"
 
 export const runtime = "nodejs"
-
-type VolumeAlertStatus = "ONLINE" | "PAUSED"
-
-type VolumeMomentum = "UP" | "DOWN" | "NONE" | "ERROR"
-
-type VolumeAlertItem = {
-  id: string
-  chainIndex: string
-  chainLabel: string
-  address: string
-  tokenName: string
-  period: string
-  monitorDown: boolean
-  status: VolumeAlertStatus
-  momentum: VolumeMomentum
-  momentumText: string
-  momentumRatio: number | null
-  lastCheckedAt: string | null
-  createdAt: string
-}
 
 type CreatePayload = {
   chainIndex?: string
@@ -55,142 +42,13 @@ type PatchPayload =
       lastCheckedAt?: string | null
     }
 
-const DATA_FILE_PATH = path.join(process.cwd(), "logs", "volume-alert-items.json")
 const MAX_TOKEN_COUNT = 100
 
-function normalizeAddress(value: string) {
-  return value.trim()
-}
-
-function toAddressKey(value: string) {
-  return value.trim().toLowerCase()
-}
-
-function toShortAddress(address: string) {
-  if (address.length <= 12) {
-    return address
-  }
-
-  return `${address.slice(0, 6)}...${address.slice(-4)}`
-}
-
-async function ensureDataFile() {
-  const directory = path.dirname(DATA_FILE_PATH)
-  await fs.mkdir(directory, { recursive: true })
-
-  try {
-    await fs.access(DATA_FILE_PATH)
-  } catch {
-    await fs.writeFile(DATA_FILE_PATH, "[]", "utf-8")
-  }
-}
-
-async function readItems(): Promise<VolumeAlertItem[]> {
-  await ensureDataFile()
-
-  try {
-    const raw = await fs.readFile(DATA_FILE_PATH, "utf-8")
-    const parsed = JSON.parse(raw)
-    if (!Array.isArray(parsed)) {
-      return []
-    }
-
-    return parsed
-      .map((item) => {
-        if (!item || typeof item !== "object") {
-          return null
-        }
-
-        const candidate = item as Partial<VolumeAlertItem> & { status?: string }
-        const normalizedStatus: VolumeAlertStatus | null =
-          candidate.status === "ONLINE" || candidate.status === "PAUSED"
-            ? candidate.status
-            : candidate.status === "RUNNING"
-              ? "ONLINE"
-              : null
-
-        if (!normalizedStatus) {
-          return null
-        }
-
-        if (
-          typeof candidate.id !== "string" ||
-          typeof candidate.chainIndex !== "string" ||
-          typeof candidate.chainLabel !== "string" ||
-          typeof candidate.address !== "string" ||
-          typeof candidate.tokenName !== "string" ||
-          typeof candidate.period !== "string" ||
-          (typeof candidate.monitorDown !== "boolean" && candidate.monitorDown !== undefined) ||
-          (candidate.momentum !== "UP" &&
-            candidate.momentum !== "DOWN" &&
-            candidate.momentum !== "NONE" &&
-            candidate.momentum !== "ERROR") ||
-          typeof candidate.momentumText !== "string" ||
-          (typeof candidate.momentumRatio !== "number" && candidate.momentumRatio !== null && candidate.momentumRatio !== undefined) ||
-          (typeof candidate.lastCheckedAt !== "string" && candidate.lastCheckedAt !== null) ||
-          typeof candidate.createdAt !== "string"
-        ) {
-          return null
-        }
-
-        const normalizedItem: VolumeAlertItem = {
-          id: candidate.id,
-          chainIndex: candidate.chainIndex,
-          chainLabel: candidate.chainLabel,
-          address: candidate.address,
-          tokenName: candidate.tokenName,
-          period: candidate.period,
-          monitorDown: candidate.monitorDown === true,
-          status: normalizedStatus,
-          momentum: candidate.momentum,
-          momentumText: candidate.momentumText,
-          momentumRatio:
-            typeof candidate.momentumRatio === "number" && Number.isFinite(candidate.momentumRatio)
-              ? candidate.momentumRatio
-              : null,
-          lastCheckedAt: candidate.lastCheckedAt,
-          createdAt: candidate.createdAt,
-        }
-
-        return normalizedItem
-      })
-      .filter((item): item is VolumeAlertItem => {
-        if (!item) {
-          return false
-        }
-
-        const candidate = item as Partial<VolumeAlertItem>
-        return (
-          typeof candidate.id === "string" &&
-          typeof candidate.chainIndex === "string" &&
-          typeof candidate.chainLabel === "string" &&
-          typeof candidate.address === "string" &&
-          typeof candidate.tokenName === "string" &&
-          typeof candidate.period === "string" &&
-          typeof candidate.monitorDown === "boolean" &&
-          (candidate.status === "ONLINE" || candidate.status === "PAUSED") &&
-          (candidate.momentum === "UP" ||
-            candidate.momentum === "DOWN" ||
-            candidate.momentum === "NONE" ||
-            candidate.momentum === "ERROR") &&
-          typeof candidate.momentumText === "string" &&
-          (typeof candidate.momentumRatio === "number" || candidate.momentumRatio === null) &&
-          (typeof candidate.lastCheckedAt === "string" || candidate.lastCheckedAt === null) &&
-          typeof candidate.createdAt === "string"
-        )
-      })
-  } catch {
-    return []
-  }
-}
-
-async function writeItems(items: VolumeAlertItem[]) {
-  await ensureDataFile()
-  await fs.writeFile(DATA_FILE_PATH, JSON.stringify(items, null, 2), "utf-8")
-}
+// Start singleton scheduler in the server process. Safe to call multiple times.
+startVolumeAlertScheduler()
 
 export async function GET() {
-  const items = await readItems()
+  const items = await readVolumeAlertItems()
   return NextResponse.json({ code: "0", msg: "success", data: items })
 }
 
@@ -208,7 +66,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ code: "400", msg: "缺少必要参数", data: null }, { status: 400 })
     }
 
-    const items = await readItems()
+    const items = await readVolumeAlertItems()
     if (items.length >= MAX_TOKEN_COUNT) {
       return NextResponse.json(
         { code: "400", msg: `最多只支持添加 ${MAX_TOKEN_COUNT} 个代币`, data: null },
@@ -238,7 +96,7 @@ export async function POST(request: Request) {
     }
 
     const nextItems = [newItem, ...items]
-    await writeItems(nextItems)
+    await writeVolumeAlertItems(nextItems)
 
     return NextResponse.json({ code: "0", msg: "添加成功", data: newItem })
   } catch {
@@ -255,7 +113,7 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ code: "400", msg: "缺少 id", data: null }, { status: 400 })
     }
 
-    const items = await readItems()
+    const items = await readVolumeAlertItems()
     const index = items.findIndex((item) => item.id === id)
     if (index < 0) {
       return NextResponse.json({ code: "404", msg: "记录不存在", data: null }, { status: 404 })
@@ -269,7 +127,7 @@ export async function PATCH(request: Request) {
         status: current.status === "ONLINE" ? "PAUSED" : "ONLINE",
       }
       items[index] = updated
-      await writeItems(items)
+      await writeVolumeAlertItems(items)
       return NextResponse.json({ code: "0", msg: "success", data: updated })
     }
 
@@ -289,7 +147,7 @@ export async function PATCH(request: Request) {
       }
 
       items[index] = updated
-      await writeItems(items)
+      await writeVolumeAlertItems(items)
       return NextResponse.json({ code: "0", msg: "success", data: updated })
     }
 
@@ -313,7 +171,7 @@ export async function PATCH(request: Request) {
       }
 
       items[index] = updated
-      await writeItems(items)
+      await writeVolumeAlertItems(items)
 
       const isSignal = momentum === "UP" || momentum === "DOWN"
       const shouldNotifyDown = updated.monitorDown
@@ -345,13 +203,13 @@ export async function PATCH(request: Request) {
 export async function DELETE(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
-    const items = await readItems()
+    const items = await readVolumeAlertItems()
     const deleteAll = searchParams.get("all") === "1"
     const idsParam = (searchParams.get("ids") ?? "").trim()
     const singleId = (searchParams.get("id") ?? "").trim()
 
     if (deleteAll) {
-      await writeItems([])
+      await writeVolumeAlertItems([])
       return NextResponse.json({ code: "0", msg: "删除成功", data: { deletedCount: items.length } })
     }
 
@@ -376,7 +234,7 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ code: "404", msg: "记录不存在", data: null }, { status: 404 })
     }
 
-    await writeItems(nextItems)
+    await writeVolumeAlertItems(nextItems)
 
     return NextResponse.json({ code: "0", msg: "删除成功", data: { deletedCount } })
   } catch {

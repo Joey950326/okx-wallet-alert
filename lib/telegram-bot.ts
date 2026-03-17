@@ -15,7 +15,20 @@ type TelegramSendMessageResult = {
 type SendTelegramMessageInput = {
   text: string
   replyMarkup?: {
-    inline_keyboard: Array<Array<{ text: string; url: string }>>
+    inline_keyboard: Array<
+      Array<
+        | {
+            text: string
+            url: string
+          }
+        | {
+            text: string
+            copy_text: {
+              text: string
+            }
+          }
+      >
+    >
   }
 }
 
@@ -162,7 +175,15 @@ export async function sendTelegramTestMessage(
   return sendTelegramMessage({
     text: `信号：测试电报，可忽略\n代币地址：${address}\n动量对比：--\n时间：${now}`,
     replyMarkup: {
-      inline_keyboard: [[{ text: "查看详情", url: detailUrl }]],
+      inline_keyboard: [
+        [
+          {
+            text: "复制CA",
+            copy_text: { text: address },
+          },
+          { text: "查看详情", url: detailUrl },
+        ],
+      ],
     },
   })
 }
@@ -178,7 +199,15 @@ export async function sendTelegramVolumeSignalMessage(
   return sendTelegramMessage({
     text: `🚨 量能信号提醒\n${signalIcon} 信号：${signalLabel}\n🪙 代币地址：${input.address}\n⏱️ 时间周期：${input.period}\n📊 动量对比：${ratioText}`,
     replyMarkup: {
-      inline_keyboard: [[{ text: "查看详情", url: detailUrl }]],
+      inline_keyboard: [
+        [
+          {
+            text: "复制CA",
+            copy_text: { text: input.address },
+          },
+          { text: "查看详情", url: detailUrl },
+        ],
+      ],
     },
   })
 }

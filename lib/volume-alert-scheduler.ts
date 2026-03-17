@@ -220,8 +220,12 @@ async function runCycle() {
 
     for (const row of onlineRows) {
       const intervalMs = toPeriodMs(row.period)
+      const currentCycleStart = Math.floor(nowMs / intervalMs) * intervalMs
+      const currentCycleRunAt = currentCycleStart + POLL_OFFSET_MS
       const lastCheckedMs = row.lastCheckedAt ? new Date(row.lastCheckedAt).getTime() : 0
-      const shouldRun = !lastCheckedMs || nowMs - lastCheckedMs >= intervalMs
+
+      // Only run after the current cycle boundary (+ offset), and at most once per cycle.
+      const shouldRun = nowMs >= currentCycleRunAt && lastCheckedMs < currentCycleRunAt
       if (!shouldRun) {
         continue
       }

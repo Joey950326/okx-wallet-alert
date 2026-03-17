@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Copy, ExternalLink, Pencil } from "lucide-react"
+import { Copy, ExternalLink, Pencil, X } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -198,6 +198,7 @@ export default function VolumeAlertPage() {
   })
   const [selectedIds, setSelectedIds] = React.useState<string[]>([])
   const [isDeleting, setIsDeleting] = React.useState(false)
+  const [deleteConfirmInput, setDeleteConfirmInput] = React.useState("")
   const [editDialog, setEditDialog] = React.useState<EditPeriodDialogState>({
     open: false,
     target: null,
@@ -293,12 +294,36 @@ export default function VolumeAlertPage() {
 
   const filteredRows = React.useMemo(() => {
     const keyword = addressFilter.trim().toLowerCase()
-    if (!keyword) {
-      return rows
+    const baseRows = keyword ? rows.filter((row) => row.address.toLowerCase().includes(keyword)) : rows
+
+    // Sort by age asc (newer first): smaller age => more recent createdAt.
+    return [...baseRows].sort((a, b) => {
+      const aTime = new Date(a.createdAt).getTime()
+      const bTime = new Date(b.createdAt).getTime()
+      return bTime - aTime
+    })
+  }, [addressFilter, rows])
+
+  const formatAge = React.useCallback((createdAt: string) => {
+    const createdMs = new Date(createdAt).getTime()
+    if (!Number.isFinite(createdMs)) {
+      return "-"
     }
 
-    return rows.filter((row) => row.address.toLowerCase().includes(keyword))
-  }, [addressFilter, rows])
+    const diffMs = Math.max(0, Date.now() - createdMs)
+    const minutes = diffMs / (60 * 1000)
+    if (minutes < 60) {
+      return `${minutes.toFixed(1)}m`
+    }
+
+    const hours = minutes / 60
+    if (hours < 24) {
+      return `${hours.toFixed(1)}h`
+    }
+
+    const days = hours / 24
+    return `${days.toFixed(1)}d`
+  }, [])
 
   React.useEffect(() => {
     setPageIndex(0)
@@ -373,8 +398,9 @@ export default function VolumeAlertPage() {
       open: true,
       mode: "all",
       ids: rows.map((row) => row.id),
-      description: `确定一键删除全部 ${rows.length} 个代币吗？`,
+      description: `确定一键删除全部 ${rows.length} 个代币吗？请输入 yjsc 进行确认。`,
     })
+    setDeleteConfirmInput("")
   }, [openFeedbackDialog, rows])
 
   const handleDeleteSelected = React.useCallback(() => {
@@ -393,6 +419,11 @@ export default function VolumeAlertPage() {
 
   const handleConfirmDelete = React.useCallback(async () => {
     if (!deleteDialog.ids.length || isDeleting) {
+      return
+    }
+
+    if (deleteDialog.mode === "all" && deleteConfirmInput.trim() !== "yjsc") {
+      openFeedbackDialog("确认失败", "请输入 yjsc 后再执行一键删除。")
       return
     }
 
@@ -422,13 +453,14 @@ export default function VolumeAlertPage() {
         return Math.min(prev, maxPageIndex)
       })
       setDeleteDialog((prev) => ({ ...prev, open: false, ids: [] }))
+      setDeleteConfirmInput("")
       openFeedbackDialog("删除成功", `已删除 ${deleteDialog.ids.length} 条记录。`)
     } catch {
       openFeedbackDialog("删除失败", "删除失败，请稍后重试")
     } finally {
       setIsDeleting(false)
     }
-  }, [deleteDialog, isDeleting, openFeedbackDialog, rows])
+  }, [deleteConfirmInput, deleteDialog, isDeleting, openFeedbackDialog, rows])
 
   const handleTogglePause = React.useCallback(
     async (id: string) => {
@@ -669,13 +701,24 @@ export default function VolumeAlertPage() {
       <div className="space-y-4 rounded-lg border bg-card p-4 md:p-6">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <h2 className="text-lg font-semibold tracking-tight">表格区</h2>
-          <div className="w-full md:w-80">
+          <div className="w-full md:w-80 relative">
             <Input
               value={addressFilter}
               onChange={(event) => setAddressFilter(event.target.value)}
               placeholder="按地址筛选"
               autoComplete="off"
+              className="pr-10"
             />
+            {addressFilter ? (
+              <button
+                type="button"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                aria-label="清空筛选"
+                onClick={() => setAddressFilter("")}
+              >
+                <X className="size-4" />
+              </button>
+            ) : null}
           </div>
         </div>
 
@@ -710,6 +753,8 @@ export default function VolumeAlertPage() {
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   <p className="text-muted-foreground">周期</p>
                   <p className="text-right">{row.period}</p>
+                  <p className="text-muted-foreground">距今</p>
+                  <p className="text-right">{formatAge(row.createdAt)}</p>
                   <p className="text-muted-foreground">状态</p>
                   <p className="text-right">{row.status === "ONLINE" ? "在线" : "暂停"}</p>
                 </div>
@@ -765,6 +810,7 @@ export default function VolumeAlertPage() {
                 </TableHead>
                 <TableHead className="whitespace-nowrap">地址</TableHead>
                 <TableHead className="whitespace-nowrap">时间周期</TableHead>
+                <TableHead className="whitespace-nowrap">距今</TableHead>
                 <TableHead className="whitespace-nowrap">最新信息</TableHead>
                 <TableHead className="whitespace-nowrap">状态</TableHead>
                 <TableHead className="whitespace-nowrap">操作</TableHead>
@@ -773,7 +819,7 @@ export default function VolumeAlertPage() {
             <TableBody>
               {!isLoaded ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
+                  <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
                     加载中...
                   </TableCell>
                 </TableRow>
@@ -807,6 +853,7 @@ export default function VolumeAlertPage() {
                       </div>
                     </TableCell>
                     <TableCell className="whitespace-nowrap">{row.period}</TableCell>
+                    <TableCell className="whitespace-nowrap">{formatAge(row.createdAt)}</TableCell>
                     <TableCell>
                       <div className="flex flex-col">
                         <span>{row.momentumText}</span>
@@ -863,7 +910,7 @@ export default function VolumeAlertPage() {
                 ))
               ) : (
                 <TableRow>
-                  <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
+                  <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
                     {filteredRows.length ? "当前页暂无数据" : "暂无数据"}
                   </TableCell>
                 </TableRow>
@@ -1128,6 +1175,20 @@ export default function VolumeAlertPage() {
             <DialogTitle>删除确认</DialogTitle>
             <DialogDescription>{deleteDialog.description || "确定执行删除操作吗？"}</DialogDescription>
           </DialogHeader>
+          {deleteDialog.mode === "all" ? (
+            <div className="space-y-2">
+              <label htmlFor="delete-confirm-input" className="text-sm font-medium">
+                输入 yjsc 确认
+              </label>
+              <Input
+                id="delete-confirm-input"
+                value={deleteConfirmInput}
+                onChange={(event) => setDeleteConfirmInput(event.target.value)}
+                placeholder="请输入 yjsc"
+                autoComplete="off"
+              />
+            </div>
+          ) : null}
           <DialogFooter>
             <Button
               type="button"
@@ -1142,7 +1203,12 @@ export default function VolumeAlertPage() {
             >
               取消
             </Button>
-            <Button type="button" variant="destructive" onClick={() => void handleConfirmDelete()} disabled={isDeleting}>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void handleConfirmDelete()}
+              disabled={isDeleting || (deleteDialog.mode === "all" && deleteConfirmInput.trim() !== "yjsc")}
+            >
               {isDeleting ? "删除中..." : "确认删除"}
             </Button>
           </DialogFooter>

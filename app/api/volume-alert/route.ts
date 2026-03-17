@@ -93,7 +93,7 @@ export async function POST(request: Request) {
       momentum: "NONE",
       momentumText: "待检测",
       momentumRatio: null,
-      lastCheckedAt: null,
+      lastCheckedAt: new Date().toISOString(),
       createdAt: new Date().toISOString(),
     }
 
@@ -159,7 +159,8 @@ export async function PATCH(request: Request) {
         momentum: "NONE",
         momentumText: "待检测",
         momentumRatio: null,
-        lastCheckedAt: null,
+        // Reset baseline so the scheduler waits until the next boundary of the new period.
+        lastCheckedAt: new Date().toISOString(),
       }
 
       items[index] = updated

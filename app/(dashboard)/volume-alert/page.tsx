@@ -91,6 +91,11 @@ type DeleteDialogState = {
 
 type BulkDeleteMode = "all" | "custom"
 
+type BulkOption = {
+  label: string
+  value: string
+}
+
 type EditPeriodDialogState = {
   open: boolean
   target: VolumeAlertItem | null
@@ -118,6 +123,21 @@ const PERIOD_OPTIONS: PeriodOption[] = [
   { label: "4h", value: "4H" },
   { label: "1d", value: "1D" },
   { label: "1w", value: "1W" },
+]
+
+const BULK_EDIT_AGE_OPTIONS: BulkOption[] = [
+  { label: "15m", value: "15m" },
+  { label: "1h", value: "1h" },
+  { label: "4h", value: "4h" },
+  { label: "12h", value: "12h" },
+  { label: "24h", value: "24h" },
+  { label: "48h", value: "48h" },
+]
+
+const BULK_EDIT_PERIOD_OPTIONS: BulkOption[] = [
+  { label: "15m", value: "15m" },
+  { label: "1h", value: "1H" },
+  { label: "4h", value: "4H" },
 ]
 
 const INITIAL_FORM_STATE: CreateFormState = {
@@ -204,6 +224,10 @@ export default function VolumeAlertPage() {
   const [bulkDeleteMode, setBulkDeleteMode] = React.useState<BulkDeleteMode>("all")
   const [bulkDeletePreset, setBulkDeletePreset] = React.useState("12h")
   const [bulkDeleteCustomInput, setBulkDeleteCustomInput] = React.useState("")
+  const [bulkEditDialogOpen, setBulkEditDialogOpen] = React.useState(false)
+  const [bulkEditAge, setBulkEditAge] = React.useState("24h")
+  const [bulkEditPeriod, setBulkEditPeriod] = React.useState("1H")
+  const [isBulkEditing, setIsBulkEditing] = React.useState(false)
   const [editDialog, setEditDialog] = React.useState<EditPeriodDialogState>({
     open: false,
     target: null,
@@ -411,6 +435,17 @@ export default function VolumeAlertPage() {
     setBulkDeleteCustomInput("")
   }, [openFeedbackDialog, rows])
 
+  const handleOpenBulkEditDialog = React.useCallback(() => {
+    if (!rows.length) {
+      openFeedbackDialog("提示", "当前没有可编辑的代币。")
+      return
+    }
+
+    setBulkEditAge("24h")
+    setBulkEditPeriod("1H")
+    setBulkEditDialogOpen(true)
+  }, [openFeedbackDialog, rows.length])
+
   const parseHoursInput = React.useCallback((raw: string) => {
     const value = raw.trim().toLowerCase()
     if (!value) {
@@ -449,6 +484,45 @@ export default function VolumeAlertPage() {
 
     return parseHoursInput(bulkDeleteCustomInput)
   }, [bulkDeleteCustomInput, bulkDeleteMode, bulkDeletePreset, parseHoursInput])
+
+  const handleConfirmBulkEdit = React.useCallback(async () => {
+    if (isBulkEditing) {
+      return
+    }
+
+    const olderThanHours = parseHoursInput(bulkEditAge)
+    if (!olderThanHours) {
+      openFeedbackDialog("编辑失败", "创建时间参数无效，请重新选择。")
+      return
+    }
+
+    setIsBulkEditing(true)
+    try {
+      const response = await fetch("/api/volume-alert", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "bulkUpdateByAge",
+          olderThanHours,
+          period: bulkEditPeriod,
+        }),
+      })
+
+      const payload = (await response.json()) as ApiResponse<{ updatedCount?: number } | null>
+      if (!response.ok || payload.code !== "0") {
+        openFeedbackDialog("编辑失败", payload.msg || "编辑失败")
+        return
+      }
+
+      await fetchRows()
+      setBulkEditDialogOpen(false)
+      openFeedbackDialog("编辑成功", `已更新 ${payload.data?.updatedCount ?? 0} 条记录。`)
+    } catch {
+      openFeedbackDialog("编辑失败", "编辑失败，请稍后重试")
+    } finally {
+      setIsBulkEditing(false)
+    }
+  }, [bulkEditAge, bulkEditPeriod, fetchRows, isBulkEditing, openFeedbackDialog, parseHoursInput])
 
   const handleDeleteSelected = React.useCallback(() => {
     if (!selectedIds.length) {
@@ -767,6 +841,9 @@ export default function VolumeAlertPage() {
             </Button>
             <Button type="button" className="w-full sm:w-auto" variant="destructive" onClick={() => handleDeleteAll()}>
               一键删除
+            </Button>
+            <Button type="button" className="w-full sm:w-auto" variant="outline" onClick={() => handleOpenBulkEditDialog()}>
+              一键编辑
             </Button>
           </div>
         </div>
@@ -1344,6 +1421,62 @@ export default function VolumeAlertPage() {
               }
             >
               {isDeleting ? "删除中..." : "确认删除"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={bulkEditDialogOpen} onOpenChange={setBulkEditDialogOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>一键编辑</DialogTitle>
+            <DialogDescription>选择创建时间与目标时间周期后，批量修改符合条件的代币。</DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label htmlFor="bulk-edit-age" className="text-sm font-medium">
+                创建时间
+              </label>
+              <Select value={bulkEditAge} onValueChange={setBulkEditAge}>
+                <SelectTrigger id="bulk-edit-age">
+                  <SelectValue placeholder="请选择创建时间" />
+                </SelectTrigger>
+                <SelectContent>
+                  {BULK_EDIT_AGE_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="bulk-edit-period" className="text-sm font-medium">
+                时间周期
+              </label>
+              <Select value={bulkEditPeriod} onValueChange={setBulkEditPeriod}>
+                <SelectTrigger id="bulk-edit-period">
+                  <SelectValue placeholder="请选择时间周期" />
+                </SelectTrigger>
+                <SelectContent>
+                  {BULK_EDIT_PERIOD_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setBulkEditDialogOpen(false)} disabled={isBulkEditing}>
+              取消
+            </Button>
+            <Button type="button" onClick={() => void handleConfirmBulkEdit()} disabled={isBulkEditing}>
+              {isBulkEditing ? "处理中..." : "确认"}
             </Button>
           </DialogFooter>
         </DialogContent>

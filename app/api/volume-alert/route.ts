@@ -26,6 +26,11 @@ type CreatePayload = {
 
 type PatchPayload =
   | {
+      action?: "bulkUpdateByAge"
+      olderThanHours?: number
+      period?: string
+    }
+  | {
       action?: "togglePause"
       id?: string
     }
@@ -115,7 +120,57 @@ export async function POST(request: Request) {
 export async function PATCH(request: Request) {
   try {
     const payload = (await request.json()) as PatchPayload
-    const id = payload.id?.trim() ?? ""
+
+    if (payload.action === "bulkUpdateByAge") {
+      const period = payload.period?.trim() ?? ""
+      const olderThanHours =
+        typeof payload.olderThanHours === "number" && Number.isFinite(payload.olderThanHours)
+          ? payload.olderThanHours
+          : NaN
+
+      if (!period) {
+        return NextResponse.json({ code: "400", msg: "时间周期不能为空", data: null }, { status: 400 })
+      }
+      if (!Number.isFinite(olderThanHours) || olderThanHours <= 0) {
+        return NextResponse.json({ code: "400", msg: "创建时间参数无效", data: null }, { status: 400 })
+      }
+
+      const items = await readVolumeAlertItems()
+      const cutoff = Date.now() - olderThanHours * 60 * 60 * 1000
+      let updatedCount = 0
+
+      const nextItems = items.map((item) => {
+        const createdMs = new Date(item.createdAt).getTime()
+        const shouldUpdate = Number.isFinite(createdMs) && createdMs <= cutoff
+        if (!shouldUpdate) {
+          return item
+        }
+
+        updatedCount += 1
+        return {
+          ...item,
+          period,
+          momentum: "NONE" as const,
+          momentumText: "待检测",
+          momentumRatio: null,
+          lastCheckedAt: new Date().toISOString(),
+        }
+      })
+
+      if (updatedCount <= 0) {
+        return NextResponse.json({ code: "404", msg: "没有符合条件的记录", data: null }, { status: 404 })
+      }
+
+      await writeVolumeAlertItems(nextItems)
+      await appendVolumeAlertActivityLog({
+        action: "UPDATE",
+        detail: `bulkUpdateByAge olderThanHours=${olderThanHours} period=${period} count=${updatedCount}`,
+      })
+
+      return NextResponse.json({ code: "0", msg: "success", data: { updatedCount } })
+    }
+
+    const id = "id" in payload ? payload.id?.trim() ?? "" : ""
 
     if (!id) {
       return NextResponse.json({ code: "400", msg: "缺少 id", data: null }, { status: 400 })

@@ -89,6 +89,8 @@ type DeleteDialogState = {
   description: string
 }
 
+type BulkDeleteMode = "all" | "custom"
+
 type EditPeriodDialogState = {
   open: boolean
   target: VolumeAlertItem | null
@@ -199,6 +201,9 @@ export default function VolumeAlertPage() {
   const [selectedIds, setSelectedIds] = React.useState<string[]>([])
   const [isDeleting, setIsDeleting] = React.useState(false)
   const [deleteConfirmInput, setDeleteConfirmInput] = React.useState("")
+  const [bulkDeleteMode, setBulkDeleteMode] = React.useState<BulkDeleteMode>("all")
+  const [bulkDeletePreset, setBulkDeletePreset] = React.useState("12h")
+  const [bulkDeleteCustomInput, setBulkDeleteCustomInput] = React.useState("")
   const [editDialog, setEditDialog] = React.useState<EditPeriodDialogState>({
     open: false,
     target: null,
@@ -398,10 +403,52 @@ export default function VolumeAlertPage() {
       open: true,
       mode: "all",
       ids: rows.map((row) => row.id),
-      description: `确定一键删除全部 ${rows.length} 个代币吗？请输入 yjsc 进行确认。`,
+      description: `请选择删除范围，并输入 yjsc 进行确认。`,
     })
     setDeleteConfirmInput("")
+    setBulkDeleteMode("all")
+    setBulkDeletePreset("12h")
+    setBulkDeleteCustomInput("")
   }, [openFeedbackDialog, rows])
+
+  const parseHoursInput = React.useCallback((raw: string) => {
+    const value = raw.trim().toLowerCase()
+    if (!value) {
+      return null
+    }
+
+    const match = value.match(/^(\d+(?:\.\d+)?)\s*([a-z]+)?$/)
+    if (!match) {
+      return null
+    }
+
+    const amount = Number(match[1])
+    const unit = match[2] ?? "h"
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return null
+    }
+
+    if (unit === "h" || unit === "hr" || unit === "hrs" || unit === "hour" || unit === "hours") {
+      return amount
+    }
+    if (unit === "d" || unit === "day" || unit === "days") {
+      return amount * 24
+    }
+
+    return null
+  }, [])
+
+  const resolvedBulkDeleteHours = React.useMemo(() => {
+    if (bulkDeleteMode !== "custom") {
+      return null
+    }
+
+    if (bulkDeletePreset !== "custom") {
+      return parseHoursInput(bulkDeletePreset)
+    }
+
+    return parseHoursInput(bulkDeleteCustomInput)
+  }, [bulkDeleteCustomInput, bulkDeleteMode, bulkDeletePreset, parseHoursInput])
 
   const handleDeleteSelected = React.useCallback(() => {
     if (!selectedIds.length) {
@@ -427,12 +474,20 @@ export default function VolumeAlertPage() {
       return
     }
 
+    if (deleteDialog.mode === "all" && bulkDeleteMode === "custom" && !resolvedBulkDeleteHours) {
+      openFeedbackDialog("确认失败", "请输入有效时间，例如 12h、24h、48h 或 2d。")
+      return
+    }
+
     setIsDeleting(true)
     try {
-      const query =
-        deleteDialog.mode === "all"
-          ? "all=1"
-          : `ids=${encodeURIComponent(deleteDialog.ids.join(","))}`
+      let query = `ids=${encodeURIComponent(deleteDialog.ids.join(","))}`
+      if (deleteDialog.mode === "all") {
+        query =
+          bulkDeleteMode === "all"
+            ? "all=1&confirm=yjsc"
+            : `olderThanHours=${encodeURIComponent(String(resolvedBulkDeleteHours))}&confirm=yjsc`
+      }
 
       const response = await fetch(`/api/volume-alert?${query}`, {
         method: "DELETE",
@@ -444,23 +499,42 @@ export default function VolumeAlertPage() {
         return
       }
 
-      const deleteSet = new Set(deleteDialog.ids)
-      const nextRows = deleteDialog.mode === "all" ? [] : rows.filter((row) => !deleteSet.has(row.id))
-      setRows(nextRows)
-      setSelectedIds((prev) => prev.filter((id) => !deleteSet.has(id)))
-      setPageIndex((prev) => {
-        const maxPageIndex = Math.max(0, Math.ceil(nextRows.length / PAGE_SIZE) - 1)
-        return Math.min(prev, maxPageIndex)
-      })
+      if (deleteDialog.mode === "all") {
+        await fetchRows()
+        setSelectedIds([])
+        setPageIndex(0)
+      } else {
+        const deleteSet = new Set(deleteDialog.ids)
+        const nextRows = rows.filter((row) => !deleteSet.has(row.id))
+        setRows(nextRows)
+        setSelectedIds((prev) => prev.filter((id) => !deleteSet.has(id)))
+        setPageIndex((prev) => {
+          const maxPageIndex = Math.max(0, Math.ceil(nextRows.length / PAGE_SIZE) - 1)
+          return Math.min(prev, maxPageIndex)
+        })
+      }
+
       setDeleteDialog((prev) => ({ ...prev, open: false, ids: [] }))
       setDeleteConfirmInput("")
-      openFeedbackDialog("删除成功", `已删除 ${deleteDialog.ids.length} 条记录。`)
+      setBulkDeleteMode("all")
+      setBulkDeletePreset("12h")
+      setBulkDeleteCustomInput("")
+      openFeedbackDialog("删除成功", `已删除 ${payload.data?.deletedCount ?? 0} 条记录。`)
     } catch {
       openFeedbackDialog("删除失败", "删除失败，请稍后重试")
     } finally {
       setIsDeleting(false)
     }
-  }, [deleteConfirmInput, deleteDialog, isDeleting, openFeedbackDialog, rows])
+  }, [
+    bulkDeleteMode,
+    deleteConfirmInput,
+    deleteDialog,
+    fetchRows,
+    isDeleting,
+    openFeedbackDialog,
+    resolvedBulkDeleteHours,
+    rows,
+  ])
 
   const handleTogglePause = React.useCallback(
     async (id: string) => {
@@ -1163,12 +1237,18 @@ export default function VolumeAlertPage() {
 
       <Dialog
         open={deleteDialog.open}
-        onOpenChange={(open) =>
+        onOpenChange={(open) => {
           setDeleteDialog((prev) => ({
             ...prev,
             open,
           }))
-        }
+          if (!open) {
+            setDeleteConfirmInput("")
+            setBulkDeleteMode("all")
+            setBulkDeletePreset("12h")
+            setBulkDeleteCustomInput("")
+          }
+        }}
       >
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
@@ -1176,17 +1256,67 @@ export default function VolumeAlertPage() {
             <DialogDescription>{deleteDialog.description || "确定执行删除操作吗？"}</DialogDescription>
           </DialogHeader>
           {deleteDialog.mode === "all" ? (
-            <div className="space-y-2">
-              <label htmlFor="delete-confirm-input" className="text-sm font-medium">
-                输入 yjsc 确认
-              </label>
-              <Input
-                id="delete-confirm-input"
-                value={deleteConfirmInput}
-                onChange={(event) => setDeleteConfirmInput(event.target.value)}
-                placeholder="请输入 yjsc"
-                autoComplete="off"
-              />
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <p className="text-sm font-medium">删除范围</p>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name="bulk-delete-mode"
+                    checked={bulkDeleteMode === "all"}
+                    onChange={() => setBulkDeleteMode("all")}
+                  />
+                  所有
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name="bulk-delete-mode"
+                    checked={bulkDeleteMode === "custom"}
+                    onChange={() => setBulkDeleteMode("custom")}
+                  />
+                  自定义
+                </label>
+              </div>
+
+              {bulkDeleteMode === "custom" ? (
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">删除创建时间超过以下时长的代币</p>
+                  <Select value={bulkDeletePreset} onValueChange={setBulkDeletePreset}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="选择预设时长" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="12h">12h</SelectItem>
+                      <SelectItem value="24h">24h</SelectItem>
+                      <SelectItem value="48h">48h</SelectItem>
+                      <SelectItem value="custom">自定义</SelectItem>
+                    </SelectContent>
+                  </Select>
+
+                  {bulkDeletePreset === "custom" ? (
+                    <Input
+                      value={bulkDeleteCustomInput}
+                      onChange={(event) => setBulkDeleteCustomInput(event.target.value)}
+                      placeholder="输入时间，如 36h 或 2d"
+                      autoComplete="off"
+                    />
+                  ) : null}
+                </div>
+              ) : null}
+
+              <div className="space-y-2">
+                <label htmlFor="delete-confirm-input" className="text-sm font-medium">
+                  输入 yjsc 确认
+                </label>
+                <Input
+                  id="delete-confirm-input"
+                  value={deleteConfirmInput}
+                  onChange={(event) => setDeleteConfirmInput(event.target.value)}
+                  placeholder="请输入 yjsc"
+                  autoComplete="off"
+                />
+              </div>
             </div>
           ) : null}
           <DialogFooter>
@@ -1207,7 +1337,11 @@ export default function VolumeAlertPage() {
               type="button"
               variant="destructive"
               onClick={() => void handleConfirmDelete()}
-              disabled={isDeleting || (deleteDialog.mode === "all" && deleteConfirmInput.trim() !== "yjsc")}
+              disabled={
+                isDeleting ||
+                (deleteDialog.mode === "all" &&
+                  (deleteConfirmInput.trim() !== "yjsc" || (bulkDeleteMode === "custom" && !resolvedBulkDeleteHours)))
+              }
             >
               {isDeleting ? "删除中..." : "确认删除"}
             </Button>

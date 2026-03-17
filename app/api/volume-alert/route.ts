@@ -228,8 +228,14 @@ export async function DELETE(request: Request) {
     const { searchParams } = new URL(request.url)
     const items = await readVolumeAlertItems()
     const deleteAll = searchParams.get("all") === "1"
+    const confirm = (searchParams.get("confirm") ?? "").trim()
+    const olderThanHoursParam = (searchParams.get("olderThanHours") ?? "").trim()
     const idsParam = (searchParams.get("ids") ?? "").trim()
     const singleId = (searchParams.get("id") ?? "").trim()
+
+    if ((deleteAll || olderThanHoursParam) && confirm !== "yjsc") {
+      return NextResponse.json({ code: "400", msg: "缺少确认口令", data: null }, { status: 400 })
+    }
 
     if (deleteAll) {
       await writeVolumeAlertItems([])
@@ -238,6 +244,36 @@ export async function DELETE(request: Request) {
         detail: `deleteAll count=${items.length}`,
       })
       return NextResponse.json({ code: "0", msg: "删除成功", data: { deletedCount: items.length } })
+    }
+
+    if (olderThanHoursParam) {
+      const olderThanHours = Number(olderThanHoursParam)
+      if (!Number.isFinite(olderThanHours) || olderThanHours <= 0) {
+        return NextResponse.json({ code: "400", msg: "无效的 olderThanHours 参数", data: null }, { status: 400 })
+      }
+
+      const cutoff = Date.now() - olderThanHours * 60 * 60 * 1000
+      const nextItems = items.filter((item) => {
+        const createdMs = new Date(item.createdAt).getTime()
+        if (!Number.isFinite(createdMs)) {
+          return true
+        }
+
+        return createdMs > cutoff
+      })
+
+      const deletedCount = items.length - nextItems.length
+      if (deletedCount <= 0) {
+        return NextResponse.json({ code: "404", msg: "没有符合条件的记录", data: null }, { status: 404 })
+      }
+
+      await writeVolumeAlertItems(nextItems)
+      await appendVolumeAlertActivityLog({
+        action: "DELETE",
+        detail: `deleteByAge olderThanHours=${olderThanHours} count=${deletedCount}`,
+      })
+
+      return NextResponse.json({ code: "0", msg: "删除成功", data: { deletedCount } })
     }
 
     const ids = idsParam

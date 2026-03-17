@@ -11,6 +11,7 @@ export type VolumeAlertItem = {
   chainLabel: string
   address: string
   tokenName: string
+  source: string
   period: string
   monitorDown: boolean
   status: VolumeAlertStatus
@@ -111,6 +112,7 @@ export async function readVolumeAlertItems(): Promise<VolumeAlertItem[]> {
           typeof candidate.chainLabel !== "string" ||
           typeof candidate.address !== "string" ||
           typeof candidate.tokenName !== "string" ||
+          (typeof candidate.source !== "string" && candidate.source !== undefined) ||
           typeof candidate.period !== "string" ||
           (typeof candidate.monitorDown !== "boolean" && candidate.monitorDown !== undefined) ||
           (candidate.momentum !== "UP" &&
@@ -131,6 +133,7 @@ export async function readVolumeAlertItems(): Promise<VolumeAlertItem[]> {
           chainLabel: candidate.chainLabel,
           address: candidate.address,
           tokenName: candidate.tokenName,
+          source: typeof candidate.source === "string" && candidate.source.trim() ? candidate.source : "手动",
           period: candidate.period,
           monitorDown: candidate.monitorDown === true,
           status: normalizedStatus,
@@ -158,6 +161,7 @@ export async function readVolumeAlertItems(): Promise<VolumeAlertItem[]> {
           typeof candidate.chainLabel === "string" &&
           typeof candidate.address === "string" &&
           typeof candidate.tokenName === "string" &&
+          typeof candidate.source === "string" &&
           typeof candidate.period === "string" &&
           typeof candidate.monitorDown === "boolean" &&
           (candidate.status === "ONLINE" || candidate.status === "PAUSED") &&

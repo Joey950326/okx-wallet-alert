@@ -92,6 +92,7 @@ export async function POST(request: Request) {
       chainLabel,
       address,
       tokenName: toShortAddress(address),
+      source: "手动",
       period,
       monitorDown,
       status: "ONLINE",

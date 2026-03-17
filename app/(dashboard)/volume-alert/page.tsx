@@ -37,6 +37,7 @@ type VolumeAlertItem = {
   chainLabel: string
   address: string
   tokenName: string
+  source: string
   period: string
   monitorDown: boolean
   status: VolumeAlertStatus
@@ -906,6 +907,8 @@ export default function VolumeAlertPage() {
                   <p className="text-right">{row.period}</p>
                   <p className="text-muted-foreground">距今</p>
                   <p className="text-right">{formatAge(row.createdAt)}</p>
+                  <p className="text-muted-foreground">来源</p>
+                  <p className="text-right">{row.source || "手动"}</p>
                   <p className="text-muted-foreground">状态</p>
                   <p className="text-right">{row.status === "ONLINE" ? "在线" : "暂停"}</p>
                 </div>
@@ -962,6 +965,7 @@ export default function VolumeAlertPage() {
                 <TableHead className="whitespace-nowrap">地址</TableHead>
                 <TableHead className="whitespace-nowrap">时间周期</TableHead>
                 <TableHead className="whitespace-nowrap">距今</TableHead>
+                <TableHead className="whitespace-nowrap">来源</TableHead>
                 <TableHead className="whitespace-nowrap">最新信息</TableHead>
                 <TableHead className="whitespace-nowrap">状态</TableHead>
                 <TableHead className="whitespace-nowrap">操作</TableHead>
@@ -970,7 +974,7 @@ export default function VolumeAlertPage() {
             <TableBody>
               {!isLoaded ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
+                  <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">
                     加载中...
                   </TableCell>
                 </TableRow>
@@ -1005,6 +1009,7 @@ export default function VolumeAlertPage() {
                     </TableCell>
                     <TableCell className="whitespace-nowrap">{row.period}</TableCell>
                     <TableCell className="whitespace-nowrap">{formatAge(row.createdAt)}</TableCell>
+                    <TableCell className="whitespace-nowrap">{row.source || "手动"}</TableCell>
                     <TableCell>
                       <div className="flex flex-col">
                         <span>{row.momentumText}</span>
@@ -1061,7 +1066,7 @@ export default function VolumeAlertPage() {
                 ))
               ) : (
                 <TableRow>
-                  <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
+                  <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">
                     {filteredRows.length ? "当前页暂无数据" : "暂无数据"}
                   </TableCell>
                 </TableRow>

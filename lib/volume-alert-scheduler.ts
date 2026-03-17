@@ -1,7 +1,13 @@
+import { randomUUID } from "node:crypto"
+
+import { fetchGemList } from "@/lib/gem-list"
 import { getMarketCandles, type GetMarketCandlesParams } from "@/lib/okx-wallet"
 import { sendTelegramVolumeSignalMessage } from "@/lib/telegram-bot"
 import {
+  appendVolumeAlertActivityLog,
   readVolumeAlertItems,
+  toAddressKey,
+  toShortAddress,
   writeVolumeAlertItems,
   type VolumeAlertItem,
   type VolumeMomentum,
@@ -206,6 +212,136 @@ async function runCheck(row: VolumeAlertItem) {
   }
 }
 
+function parseTokenCreateTimeMs(value: string | number | undefined): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value < 1_000_000_000_000 ? value * 1000 : value
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim()
+    if (!trimmed) {
+      return null
+    }
+
+    const asNumber = Number(trimmed)
+    if (Number.isFinite(asNumber)) {
+      return asNumber < 1_000_000_000_000 ? asNumber * 1000 : asNumber
+    }
+
+    const asDate = new Date(trimmed).getTime()
+    if (Number.isFinite(asDate)) {
+      return asDate
+    }
+  }
+
+  return null
+}
+
+function resolvePeriodByTokenAge(tokenCreateTime: string | number | undefined): string {
+  const tokenCreateMs = parseTokenCreateTimeMs(tokenCreateTime)
+  if (!tokenCreateMs) {
+    return "15m"
+  }
+
+  const ageHours = (Date.now() - tokenCreateMs) / (60 * 60 * 1000)
+  if (ageHours > 48) {
+    return "4H"
+  }
+  if (ageHours > 24) {
+    return "1H"
+  }
+  return "15m"
+}
+
+async function syncGemListAfterCycle() {
+  let items = await readVolumeAlertItems()
+  const existingAddressKeys = new Set(items.map((item) => toAddressKey(item.address)))
+
+  const gemList = await fetchGemList()
+  let hasAdded = false
+
+  for (const gem of gemList) {
+    const addressRaw = gem.tokenInfo?.tokenContractAddress ?? ""
+    const address = addressRaw.trim()
+    if (!address) {
+      continue
+    }
+
+    const addressKey = toAddressKey(address)
+    if (existingAddressKeys.has(addressKey)) {
+      continue
+    }
+
+    const period = resolvePeriodByTokenAge(gem.tokenInfo?.tokenCreateTime)
+    const now = new Date().toISOString()
+
+    let momentum: VolumeMomentum = "NONE"
+    let momentumText = "待检测"
+    let momentumRatio: number | null = null
+
+    try {
+      const candles = await getMarketCandles({
+        chainIndex: "501",
+        tokenContractAddress: address,
+        bar: period as GetMarketCandlesParams["bar"],
+        limit: "5",
+      })
+
+      const analyzed = analyzeMomentum(candles)
+      momentum = analyzed.momentum
+      momentumText = analyzed.momentumText
+      momentumRatio = analyzed.momentumRatio
+
+      // Auto-added gems default monitorDown=false, so only UP signals are pushed.
+      if (momentum === "UP") {
+        await sendTelegramVolumeSignalMessage({
+          signal: "UP",
+          address,
+          chain: "solana",
+          period,
+          ratio: momentumRatio,
+        })
+      }
+    } catch {
+      momentum = "ERROR"
+      momentumText = "检测失败"
+      momentumRatio = null
+    }
+
+    const newItem: VolumeAlertItem = {
+      id: randomUUID(),
+      chainIndex: "501",
+      chainLabel: "solana",
+      address,
+      tokenName: toShortAddress(address),
+      source: "手动",
+      period,
+      monitorDown: false,
+      status: "ONLINE",
+      momentum,
+      momentumText,
+      momentumRatio,
+      lastCheckedAt: now,
+      createdAt: now,
+    }
+
+    items = [newItem, ...items]
+    existingAddressKeys.add(addressKey)
+    hasAdded = true
+
+    await appendVolumeAlertActivityLog({
+      action: "CREATE",
+      itemId: newItem.id,
+      address: newItem.address,
+      detail: `from=getGemList period=${newItem.period} source=${newItem.source}`,
+    })
+  }
+
+  if (hasAdded) {
+    await writeVolumeAlertItems(items)
+  }
+}
+
 async function runCycle() {
   if (isCycleRunning) {
     rerunRequested = true
@@ -233,6 +369,9 @@ async function runCycle() {
       await runCheck(row)
       await sleep(REQUEST_GAP_MS)
     }
+
+    // Process OKX gems list after momentum cycle; new tokens are evaluated before insertion.
+    await syncGemListAfterCycle()
   } finally {
     isCycleRunning = false
 

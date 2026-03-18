@@ -38,6 +38,8 @@ type SendVolumeSignalTelegramInput = {
   chain: string
   period: string
   ratio: number | null
+  maxRatio: number | null
+  minRatio: number | null
 }
 
 type SendTelegramTestMessageInput = {
@@ -49,6 +51,14 @@ const TELEGRAM_API_BASE_URL = "https://api.telegram.org"
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || process.env.TG_BOT_TOKEN
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || process.env.TG_CHAT_ID
 const TELEGRAM_PROXY_URL = process.env.TELEGRAM_PROXY_URL || process.env.HTTPS_PROXY || process.env.HTTP_PROXY
+
+function buildSecuritySearchUrl(address: string) {
+  const url = new URL("https://x.com/search")
+  url.searchParams.set("q", `from:badattrading_ ${address}`)
+  url.searchParams.set("src", "typed_query")
+  url.searchParams.set("f", "top")
+  return url.toString()
+}
 
 function assertTelegramCredentials() {
   if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
@@ -195,9 +205,12 @@ export async function sendTelegramVolumeSignalMessage(
   const signalIcon = input.signal === "UP" ? "📈" : "📉"
   const ratioText = input.ratio && Number.isFinite(input.ratio) ? `${input.ratio.toFixed(2)}x` : "--"
   const detailUrl = `https://web3.okx.com/zh-hans/token/${encodeURIComponent(input.chain)}/${encodeURIComponent(input.address)}`
+  const securityUrl = buildSecuritySearchUrl(input.address)
+  const maxRatioText = input.maxRatio && Number.isFinite(input.maxRatio) ? `${(input.maxRatio * 100).toFixed(1)}%` : "--"
+  const minRatioText = input.minRatio && Number.isFinite(input.minRatio) ? `${(input.minRatio * 100).toFixed(1)}%` : "--"
 
   return sendTelegramMessage({
-    text: `🚨 量能信号提醒\n${signalIcon} 信号：${signalLabel}\n🪙 代币地址：${input.address}\n⏱️ 时间周期：${input.period}\n📊 动量对比：${ratioText}`,
+    text: `🚨 量能信号提醒\n${signalIcon} 信号：${signalLabel}\n🪙 代币地址：${input.address}\n⏱️ 时间周期：${input.period}\n📊 动量对比：${ratioText}\n📈 极大值比：${maxRatioText}\n📉 极小值比：${minRatioText}`,
     replyMarkup: {
       inline_keyboard: [
         [
@@ -205,6 +218,7 @@ export async function sendTelegramVolumeSignalMessage(
             text: "复制CA",
             copy_text: { text: input.address },
           },
+          { text: "安全检测", url: securityUrl },
           { text: "查看详情", url: detailUrl },
         ],
       ],

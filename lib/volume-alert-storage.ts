@@ -18,6 +18,8 @@ export type VolumeAlertItem = {
   momentum: VolumeMomentum
   momentumText: string
   momentumRatio: number | null
+  maxClose: number | null
+  minClose: number | null
   lastCheckedAt: string | null
   createdAt: string
 }
@@ -121,6 +123,8 @@ export async function readVolumeAlertItems(): Promise<VolumeAlertItem[]> {
             candidate.momentum !== "ERROR") ||
           typeof candidate.momentumText !== "string" ||
           (typeof candidate.momentumRatio !== "number" && candidate.momentumRatio !== null && candidate.momentumRatio !== undefined) ||
+          (typeof candidate.maxClose !== "number" && candidate.maxClose !== null && candidate.maxClose !== undefined) ||
+          (typeof candidate.minClose !== "number" && candidate.minClose !== null && candidate.minClose !== undefined) ||
           (typeof candidate.lastCheckedAt !== "string" && candidate.lastCheckedAt !== null) ||
           typeof candidate.createdAt !== "string"
         ) {
@@ -142,6 +146,14 @@ export async function readVolumeAlertItems(): Promise<VolumeAlertItem[]> {
           momentumRatio:
             typeof candidate.momentumRatio === "number" && Number.isFinite(candidate.momentumRatio)
               ? candidate.momentumRatio
+              : null,
+          maxClose:
+            typeof candidate.maxClose === "number" && Number.isFinite(candidate.maxClose)
+              ? candidate.maxClose
+              : null,
+          minClose:
+            typeof candidate.minClose === "number" && Number.isFinite(candidate.minClose)
+              ? candidate.minClose
               : null,
           lastCheckedAt: candidate.lastCheckedAt,
           createdAt: candidate.createdAt,
@@ -171,6 +183,8 @@ export async function readVolumeAlertItems(): Promise<VolumeAlertItem[]> {
             candidate.momentum === "ERROR") &&
           typeof candidate.momentumText === "string" &&
           (typeof candidate.momentumRatio === "number" || candidate.momentumRatio === null) &&
+          (typeof candidate.maxClose === "number" || candidate.maxClose === null) &&
+          (typeof candidate.minClose === "number" || candidate.minClose === null) &&
           (typeof candidate.lastCheckedAt === "string" || candidate.lastCheckedAt === null) &&
           typeof candidate.createdAt === "string"
         )

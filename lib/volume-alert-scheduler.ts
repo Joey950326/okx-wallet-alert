@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 
 import { fetchGemList } from "@/lib/gem-list"
 import { getMarketCandles, type GetMarketCandlesParams } from "@/lib/okx-wallet"
+import { getMomentumThresholdMultiplier } from "@/lib/volume-alert-config"
 import { sendTelegramVolumeSignalMessage } from "@/lib/telegram-bot"
 import {
   appendVolumeAlertActivityLog,
@@ -66,16 +67,18 @@ function toPeriodMs(period: string) {
   return 15 * 60 * 1000
 }
 
-function analyzeMomentum(candles: CandleItem[]): {
+function analyzeMomentum(candles: CandleItem[], period: string): {
   momentum: VolumeMomentum
   momentumText: string
   momentumRatio: number | null
+  currentClose: number | null
 } {
   if (!Array.isArray(candles) || candles.length < 3) {
     return {
       momentum: "NONE",
       momentumText: "K线不足",
       momentumRatio: null,
+      currentClose: null,
     }
   }
 
@@ -93,17 +96,20 @@ function analyzeMomentum(candles: CandleItem[]): {
       momentum: "ERROR",
       momentumText: "数据异常",
       momentumRatio: null,
+      currentClose: null,
     }
   }
 
+  const threshold = getMomentumThresholdMultiplier(period)
   const ratio = prevVol > 0 ? currentVol / prevVol : null
 
-  if (currentVol >= prevVol * 3) {
+  if (currentVol >= prevVol * threshold) {
     if (currentClose > currentOpen) {
       return {
         momentum: "UP",
         momentumText: "增量上涨",
         momentumRatio: ratio,
+        currentClose,
       }
     }
 
@@ -112,6 +118,7 @@ function analyzeMomentum(candles: CandleItem[]): {
         momentum: "DOWN",
         momentumText: "增量下跌",
         momentumRatio: ratio,
+        currentClose,
       }
     }
   }
@@ -120,6 +127,22 @@ function analyzeMomentum(candles: CandleItem[]): {
     momentum: "NONE",
     momentumText: "无明显动量",
     momentumRatio: ratio,
+    currentClose,
+  }
+}
+
+function getCloseStats(candles: CandleItem[]) {
+  const closeValues = candles.map((item) => Number(item.c)).filter((value) => Number.isFinite(value))
+  if (!closeValues.length) {
+    return {
+      maxClose: null,
+      minClose: null,
+    }
+  }
+
+  return {
+    maxClose: Math.max(...closeValues),
+    minClose: Math.min(...closeValues),
   }
 }
 
@@ -150,7 +173,7 @@ async function runCheck(row: VolumeAlertItem) {
       limit: "5",
     })
 
-    const momentumResult = analyzeMomentum(payload)
+    const momentumResult = analyzeMomentum(payload, row.period)
     const normalizedMomentumResult =
       !row.monitorDown && momentumResult.momentum === "DOWN"
         ? {
@@ -160,6 +183,8 @@ async function runCheck(row: VolumeAlertItem) {
           }
         : momentumResult
 
+    const closeStats = getCloseStats(payload)
+
     const items = await readVolumeAlertItems()
     const index = items.findIndex((item) => item.id === row.id)
     if (index < 0) {
@@ -167,11 +192,28 @@ async function runCheck(row: VolumeAlertItem) {
     }
 
     const current = items[index]
+    const prevMaxClose = typeof current.maxClose === "number" ? current.maxClose : closeStats.maxClose
+    const prevMinClose = typeof current.minClose === "number" ? current.minClose : closeStats.minClose
+    const nextMaxClose =
+      typeof closeStats.maxClose === "number"
+        ? typeof current.maxClose === "number"
+          ? Math.max(current.maxClose, closeStats.maxClose)
+          : closeStats.maxClose
+        : current.maxClose
+    const nextMinClose =
+      typeof closeStats.minClose === "number"
+        ? typeof current.minClose === "number"
+          ? Math.min(current.minClose, closeStats.minClose)
+          : closeStats.minClose
+        : current.minClose
+
     const updated: VolumeAlertItem = {
       ...current,
       momentum: normalizedMomentumResult.momentum,
       momentumText: normalizedMomentumResult.momentumText,
       momentumRatio: normalizedMomentumResult.momentumRatio,
+      maxClose: nextMaxClose ?? null,
+      minClose: nextMinClose ?? null,
       lastCheckedAt: now,
     }
 
@@ -185,12 +227,23 @@ async function runCheck(row: VolumeAlertItem) {
 
     if (isSignal && allowNotifyByDirection && isNewSignal) {
       const signal = updated.momentum === "UP" ? "UP" : "DOWN"
+      const currentClose = normalizedMomentumResult.currentClose
+      const maxRatio =
+        typeof currentClose === "number" && typeof prevMaxClose === "number" && prevMaxClose > 0
+          ? currentClose / prevMaxClose
+          : null
+      const minRatio =
+        typeof currentClose === "number" && typeof prevMinClose === "number" && prevMinClose > 0
+          ? currentClose / prevMinClose
+          : null
       await sendTelegramVolumeSignalMessage({
         signal,
         address: updated.address,
         chain: updated.chainLabel,
         period: updated.period,
         ratio: updated.momentumRatio,
+        maxRatio,
+        minRatio,
       })
     }
   } catch {
@@ -205,6 +258,8 @@ async function runCheck(row: VolumeAlertItem) {
       momentum: "ERROR",
       momentumText: "检测失败",
       momentumRatio: null,
+      maxClose: items[index].maxClose,
+      minClose: items[index].minClose,
       lastCheckedAt: now,
     }
 
@@ -278,6 +333,8 @@ async function syncGemListAfterCycle() {
     let momentum: VolumeMomentum = "NONE"
     let momentumText = "待检测"
     let momentumRatio: number | null = null
+    let gemMaxClose: number | null = null
+    let gemMinClose: number | null = null
 
     try {
       const candles = await getMarketCandles({
@@ -287,19 +344,33 @@ async function syncGemListAfterCycle() {
         limit: "5",
       })
 
-      const analyzed = analyzeMomentum(candles)
+      const analyzed = analyzeMomentum(candles, period)
       momentum = analyzed.momentum
       momentumText = analyzed.momentumText
       momentumRatio = analyzed.momentumRatio
+      const closeStats = getCloseStats(candles)
+      gemMaxClose = closeStats.maxClose
+      gemMinClose = closeStats.minClose
 
       // Auto-added gems default monitorDown=false, so only UP signals are pushed.
       if (momentum === "UP") {
+        const currentClose = analyzed.currentClose
+        const maxRatio =
+          typeof currentClose === "number" && typeof closeStats.maxClose === "number" && closeStats.maxClose > 0
+            ? currentClose / closeStats.maxClose
+            : null
+        const minRatio =
+          typeof currentClose === "number" && typeof closeStats.minClose === "number" && closeStats.minClose > 0
+            ? currentClose / closeStats.minClose
+            : null
         await sendTelegramVolumeSignalMessage({
           signal: "UP",
           address,
           chain: "solana",
           period,
           ratio: momentumRatio,
+          maxRatio,
+          minRatio,
         })
       }
     } catch {
@@ -321,6 +392,8 @@ async function syncGemListAfterCycle() {
       momentum,
       momentumText,
       momentumRatio,
+      maxClose: gemMaxClose,
+      minClose: gemMinClose,
       lastCheckedAt: now,
       createdAt: now,
     }

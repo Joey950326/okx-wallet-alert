@@ -99,6 +99,8 @@ export async function POST(request: Request) {
       momentum: "NONE",
       momentumText: "待检测",
       momentumRatio: null,
+      maxClose: null,
+      minClose: null,
       lastCheckedAt: new Date().toISOString(),
       createdAt: new Date().toISOString(),
     }
@@ -154,6 +156,8 @@ export async function PATCH(request: Request) {
           momentum: "NONE" as const,
           momentumText: "待检测",
           momentumRatio: null,
+          maxClose: item.maxClose,
+          minClose: item.minClose,
           lastCheckedAt: new Date().toISOString(),
         }
       })
@@ -215,6 +219,8 @@ export async function PATCH(request: Request) {
         momentum: "NONE",
         momentumText: "待检测",
         momentumRatio: null,
+        maxClose: current.maxClose,
+        minClose: current.minClose,
         // Reset baseline so the scheduler waits until the next boundary of the new period.
         lastCheckedAt: new Date().toISOString(),
       }
@@ -264,6 +270,8 @@ export async function PATCH(request: Request) {
             chain: updated.chainLabel,
             period: updated.period,
             ratio: updated.momentumRatio,
+            maxRatio: null,
+            minRatio: null,
           })
         } catch {
           // Notification failure should not block state persistence.

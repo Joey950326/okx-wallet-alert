@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto"
 
 import { fetchGemList } from "@/lib/gem-list"
 import { getMarketCandles, type GetMarketCandlesParams } from "@/lib/okx-wallet"
-import { getMomentumThresholdMultiplier } from "@/lib/volume-alert-config"
+import { getMomentumThresholdMultiplier, shouldPassExtremeRatioGuard } from "@/lib/volume-alert-config"
 import { sendTelegramVolumeSignalMessage } from "@/lib/telegram-bot"
 import {
   appendVolumeAlertActivityLog,
@@ -230,21 +230,24 @@ async function runCheck(row: VolumeAlertItem) {
       const currentClose = normalizedMomentumResult.currentClose
       const maxRatio =
         typeof currentClose === "number" && typeof prevMaxClose === "number" && prevMaxClose > 0
-          ? currentClose / prevMaxClose
+          ? (prevMaxClose - currentClose) / prevMaxClose
           : null
       const minRatio =
         typeof currentClose === "number" && typeof prevMinClose === "number" && prevMinClose > 0
-          ? currentClose / prevMinClose
+          ? (currentClose - prevMinClose) / prevMinClose
           : null
-      await sendTelegramVolumeSignalMessage({
-        signal,
-        address: updated.address,
-        chain: updated.chainLabel,
-        period: updated.period,
-        ratio: updated.momentumRatio,
-        maxRatio,
-        minRatio,
-      })
+
+      if (shouldPassExtremeRatioGuard({ signal, maxRatio, minRatio })) {
+        await sendTelegramVolumeSignalMessage({
+          signal,
+          address: updated.address,
+          chain: updated.chainLabel,
+          period: updated.period,
+          ratio: updated.momentumRatio,
+          maxRatio,
+          minRatio,
+        })
+      }
     }
   } catch {
     const items = await readVolumeAlertItems()
@@ -357,21 +360,24 @@ async function syncGemListAfterCycle() {
         const currentClose = analyzed.currentClose
         const maxRatio =
           typeof currentClose === "number" && typeof closeStats.maxClose === "number" && closeStats.maxClose > 0
-            ? currentClose / closeStats.maxClose
+            ? (closeStats.maxClose - currentClose) / closeStats.maxClose
             : null
         const minRatio =
           typeof currentClose === "number" && typeof closeStats.minClose === "number" && closeStats.minClose > 0
-            ? currentClose / closeStats.minClose
+            ? (currentClose - closeStats.minClose) / closeStats.minClose
             : null
-        await sendTelegramVolumeSignalMessage({
-          signal: "UP",
-          address,
-          chain: "solana",
-          period,
-          ratio: momentumRatio,
-          maxRatio,
-          minRatio,
-        })
+
+        if (shouldPassExtremeRatioGuard({ signal: "UP", maxRatio, minRatio })) {
+          await sendTelegramVolumeSignalMessage({
+            signal: "UP",
+            address,
+            chain: "solana",
+            period,
+            ratio: momentumRatio,
+            maxRatio,
+            minRatio,
+          })
+        }
       }
     } catch {
       momentum = "ERROR"

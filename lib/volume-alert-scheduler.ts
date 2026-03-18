@@ -314,7 +314,7 @@ async function syncGemListAfterCycle() {
       chainLabel: "solana",
       address,
       tokenName: toShortAddress(address),
-      source: "手动",
+      source: "自动",
       period,
       monitorDown: false,
       status: "ONLINE",

@@ -4,6 +4,9 @@ export const MOMENTUM_THRESHOLD_BY_PERIOD: Record<string, number> = { // 动量f
 
 export const DEFAULT_MOMENTUM_THRESHOLD = 2 // 默认动量阈值乘数
 
+// 默认每次获取 K 线条数。
+export const DEFAULT_KLINE_FETCH_LIMIT = "100"
+
 // 极值推送开关，默认关闭。
 export const EXTREME_RATIO_GUARD_ENABLED = false
 

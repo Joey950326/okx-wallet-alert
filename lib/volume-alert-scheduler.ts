@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto"
 
 import { fetchGemList } from "@/lib/gem-list"
 import { getMarketCandles, type GetMarketCandlesParams } from "@/lib/okx-wallet"
-import { getMomentumThresholdMultiplier, shouldPassExtremeRatioGuard } from "@/lib/volume-alert-config"
+import {
+  DEFAULT_KLINE_FETCH_LIMIT,
+  getMomentumThresholdMultiplier,
+  shouldPassExtremeRatioGuard,
+} from "@/lib/volume-alert-config"
 import { sendTelegramVolumeSignalMessage } from "@/lib/telegram-bot"
 import {
   appendVolumeAlertActivityLog,
@@ -170,7 +174,7 @@ async function runCheck(row: VolumeAlertItem) {
       chainIndex: row.chainIndex,
       tokenContractAddress: row.address,
       bar: row.period as GetMarketCandlesParams["bar"],
-      limit: "5",
+      limit: DEFAULT_KLINE_FETCH_LIMIT,
     })
 
     const momentumResult = analyzeMomentum(payload, row.period)
@@ -344,7 +348,7 @@ async function syncGemListAfterCycle() {
         chainIndex: "501",
         tokenContractAddress: address,
         bar: period as GetMarketCandlesParams["bar"],
-        limit: "5",
+        limit: DEFAULT_KLINE_FETCH_LIMIT,
       })
 
       const analyzed = analyzeMomentum(candles, period)

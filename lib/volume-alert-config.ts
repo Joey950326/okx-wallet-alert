@@ -7,8 +7,8 @@ export const DEFAULT_MOMENTUM_THRESHOLD = 2 // 默认动量阈值乘数
 // 默认每次获取 K 线条数。
 export const DEFAULT_KLINE_FETCH_LIMIT = "100"
 
-// 极值推送开关，默认关闭。
-export const EXTREME_RATIO_GUARD_ENABLED = false
+// 极值推送开关，默认开启。
+export const EXTREME_RATIO_GUARD_ENABLED = true
 
 // 极值比阈值，默认 25%（0.25）。
 export const EXTREME_MAX_RATIO_THRESHOLD = 0.25
@@ -28,9 +28,17 @@ export function shouldPassExtremeRatioGuard(params: {
     return true
   }
 
-  if (params.signal === "UP") {
-    return typeof params.maxRatio === "number" && Number.isFinite(params.maxRatio) && params.maxRatio < EXTREME_MAX_RATIO_THRESHOLD
+  const maxRatio = params.maxRatio
+  const minRatio = params.minRatio
+
+  if (typeof maxRatio !== "number" || !Number.isFinite(maxRatio)) {
+    return false
   }
 
-  return typeof params.minRatio === "number" && Number.isFinite(params.minRatio) && params.minRatio < EXTREME_MIN_RATIO_THRESHOLD
+  if (typeof minRatio !== "number" || !Number.isFinite(minRatio)) {
+    return false
+  }
+
+  // 仅当极大值比或极小值比都低于阈值时，允许推送。
+  return maxRatio < EXTREME_MAX_RATIO_THRESHOLD || minRatio < EXTREME_MIN_RATIO_THRESHOLD
 }

@@ -144,7 +144,7 @@ const BULK_EDIT_PERIOD_OPTIONS: BulkOption[] = [
 const INITIAL_FORM_STATE: CreateFormState = {
   chainIndex: CHAIN_OPTIONS[0]?.value ?? "501",
   address: "",
-  periodMode: "15m",
+  periodMode: "1H",
   customPeriod: "",
   monitorDown: false,
 }

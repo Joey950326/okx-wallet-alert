@@ -302,17 +302,11 @@ function parseTokenCreateTimeMs(value: string | number | undefined): number | nu
 function resolvePeriodByTokenAge(tokenCreateTime: string | number | undefined): string {
   const tokenCreateMs = parseTokenCreateTimeMs(tokenCreateTime)
   if (!tokenCreateMs) {
-    return "15m"
+    return "4H"
   }
 
   const ageHours = (Date.now() - tokenCreateMs) / (60 * 60 * 1000)
-  if (ageHours > 48) {
-    return "4H"
-  }
-  if (ageHours > 24) {
-    return "1H"
-  }
-  return "15m"
+  return ageHours < 24 ? "1H" : "4H"
 }
 
 async function syncGemListAfterCycle() {

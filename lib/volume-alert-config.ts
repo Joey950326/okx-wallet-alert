@@ -10,9 +10,8 @@ export const DEFAULT_KLINE_FETCH_LIMIT = "100"
 // 极值推送开关，默认开启。
 export const EXTREME_RATIO_GUARD_ENABLED = true
 
-// 极值比阈值，默认 25%（0.25）。
+// 极大值比阈值，默认 25%（0.25）。
 export const EXTREME_MAX_RATIO_THRESHOLD = 0.25
-export const EXTREME_MIN_RATIO_THRESHOLD = 0.25
 
 export function getMomentumThresholdMultiplier(period: string): number {
   const normalized = period.trim().toLowerCase()
@@ -29,16 +28,11 @@ export function shouldPassExtremeRatioGuard(params: {
   }
 
   const maxRatio = params.maxRatio
-  const minRatio = params.minRatio
 
   if (typeof maxRatio !== "number" || !Number.isFinite(maxRatio)) {
     return false
   }
 
-  if (typeof minRatio !== "number" || !Number.isFinite(minRatio)) {
-    return false
-  }
-
-  // 仅当极大值比或极小值比都低于阈值时，允许推送。
-  return maxRatio < EXTREME_MAX_RATIO_THRESHOLD || minRatio < EXTREME_MIN_RATIO_THRESHOLD
+  // 仅当极大值比低于阈值时，允许推送。
+  return maxRatio < EXTREME_MAX_RATIO_THRESHOLD
 }

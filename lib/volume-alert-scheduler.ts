@@ -274,41 +274,6 @@ async function runCheck(row: VolumeAlertItem) {
   }
 }
 
-function parseTokenCreateTimeMs(value: string | number | undefined): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value < 1_000_000_000_000 ? value * 1000 : value
-  }
-
-  if (typeof value === "string") {
-    const trimmed = value.trim()
-    if (!trimmed) {
-      return null
-    }
-
-    const asNumber = Number(trimmed)
-    if (Number.isFinite(asNumber)) {
-      return asNumber < 1_000_000_000_000 ? asNumber * 1000 : asNumber
-    }
-
-    const asDate = new Date(trimmed).getTime()
-    if (Number.isFinite(asDate)) {
-      return asDate
-    }
-  }
-
-  return null
-}
-
-function resolvePeriodByTokenAge(tokenCreateTime: string | number | undefined): string {
-  const tokenCreateMs = parseTokenCreateTimeMs(tokenCreateTime)
-  if (!tokenCreateMs) {
-    return "4H"
-  }
-
-  const ageHours = (Date.now() - tokenCreateMs) / (60 * 60 * 1000)
-  return ageHours < 24 ? "1H" : "4H"
-}
-
 async function syncGemListAfterCycle() {
   let items = await readVolumeAlertItems()
   const existingAddressKeys = new Set(items.map((item) => toAddressKey(item.address)))
@@ -328,7 +293,7 @@ async function syncGemListAfterCycle() {
       continue
     }
 
-    const period = resolvePeriodByTokenAge(gem.tokenInfo?.tokenCreateTime)
+    const period = "1H"
     const now = new Date().toISOString()
 
     let momentum: VolumeMomentum = "NONE"
